@@ -1,0 +1,82 @@
+version: 2
+
+project_name: gostack
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: gostack
+    main: ./cmd/gostack
+    binary: gostack
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/gostack/cli/internal/cli.Version={{.Version}}
+      - -X github.com/gostack/cli/internal/cli.Commit={{.Commit}}
+      - -X github.com/gostack/cli/internal/cli.BuildDate={{.Date}}
+
+archives:
+  - id: gostack
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: gostack
+    name: cli
+  name_template: "v{{.Version}}"
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Installation
+
+    ```bash
+    go install github.com/gostack/cli@latest
+    ```
+
+    Or download the binary for your platform from the assets below.
+
+brews:
+  - name: gostack
+    repository:
+      owner: gostack
+      name: homebrew-tap
+    homepage: "https://github.com/gostack/cli"
+    description: "Modern Go Project Scaffolding inspired by Vite"
+    license: "MIT"
+    install: |
+      bin.install "gostack"
+    test: |
+      system "#{bin}/gostack version"

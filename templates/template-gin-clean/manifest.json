@@ -1,0 +1,7 @@
+{
+  "name": "Gin Clean Architecture",
+  "framework": "gin",
+  "architecture": "clean",
+  "version": "1.0.0",
+  "go": "1.22"
+}
