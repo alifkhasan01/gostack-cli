@@ -31,9 +31,12 @@ builds:
 archives:
   - id: gostack
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - README.md
       - LICENSE
@@ -62,21 +65,29 @@ release:
   footer: |
     ## Installation
 
+    **Go install:**
     ```bash
     go install github.com/alifkhasan01/gostack-cli@latest
     ```
 
+    **Homebrew:**
+    ```bash
+    brew tap alifkhasan01/gostack
+    brew install gostack
+    ```
+
     Or download the binary for your platform from the assets below.
 
-brews:
+homebrew_casks:
   - name: gostack
     repository:
       owner: alifkhasan01
       name: homebrew-gostack
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/alifkhasan01/gostack-cli"
     description: "Modern Go Project Scaffolding inspired by Vite"
     license: "MIT"
-    install: |
-      bin.install "gostack"
+    binaries:
+      - gostack
     test: |
-      system "#{bin}/gostack version"
+      system "#{staged_path}/gostack version"
