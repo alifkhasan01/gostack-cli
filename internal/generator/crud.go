@@ -378,9 +378,103 @@ func (h *{{.Name}}Handler) Delete(c *gin.Context) {
 }
 `
 
+func crudHandlerTmpl(framework string) string {
+	switch framework {
+	case "fiber":
+		return crudHandlerFiberTmpl
+	default:
+		return crudHandlerGinTmpl
+	}
+}
+
+const crudHandlerFiberTmpl = `package handler
+
+import (
+	"strconv"
+
+	"{{.Meta.ModuleName}}/internal/entity"
+	"{{.Meta.ModuleName}}/internal/service"
+	"github.com/gofiber/fiber/v2"
+)
+
+// {{.Name}}Handler handles HTTP requests for {{.Lower}} resources.
+type {{.Name}}Handler struct {
+	svc service.{{.Name}}Service
+}
+
+// New{{.Name}}Handler creates a new {{.Name}}Handler.
+func New{{.Name}}Handler(svc service.{{.Name}}Service) *{{.Name}}Handler {
+	return &{{.Name}}Handler{svc: svc}
+}
+
+// List handles GET /{{.Plural}}
+func (h *{{.Name}}Handler) List(c *fiber.Ctx) error {
+	items, err := h.svc.GetAll()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(items)
+}
+
+// Get handles GET /{{.Plural}}/:id
+func (h *{{.Name}}Handler) Get(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+	item, err := h.svc.GetByID(id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(item)
+}
+
+// Create handles POST /{{.Plural}}
+func (h *{{.Name}}Handler) Create(c *fiber.Ctx) error {
+	var req entity.Create{{.Name}}Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	item, err := h.svc.Create(req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(item)
+}
+
+// Update handles PUT /{{.Plural}}/:id
+func (h *{{.Name}}Handler) Update(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+	var req entity.Update{{.Name}}Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	item, err := h.svc.Update(id, req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(item)
+}
+
+// Delete handles DELETE /{{.Plural}}/:id
+func (h *{{.Name}}Handler) Delete(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+	if err := h.svc.Delete(id); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+`
+
 func (c *CRUDConfig) writeHandler() error {
 	dir := filepath.Join(c.Root, "internal", "handler")
-	tmpl := crudHandlerGinTmpl
+	tmpl := crudHandlerTmpl(c.Meta.Framework)
 	return writeCRUDTemplate(tmpl, dir, c.Lower+"_handler.go", c)
 }
 
@@ -433,17 +527,29 @@ func (c *CRUDConfig) injectRoutes() error {
 
 	if !strings.Contains(src, anchor) {
 		fmt.Printf("  ⚠️  anchor '%s' not found in routes.go — add it manually:\n", anchor)
-		fmt.Printf("       %s\n", ginRouteSnippet(c))
 		return nil
 	}
 
-	snippet := ginRouteSnippet(c)
+	snippet := routeSnippet(c)
 	updated := strings.Replace(src, anchor, anchor+"\n\t"+snippet, 1)
 	if err := os.WriteFile(routesFile, []byte(updated), 0644); err != nil {
 		return err
 	}
 	fmt.Printf("  ✅ Injected routes: /api/v1/%s\n", c.Plural)
 	return nil
+}
+
+func routeSnippet(c *CRUDConfig) string {
+	switch c.Meta.Framework {
+	case "fiber":
+		return fiberRouteSnippet(c)
+	case "echo":
+		return echoRouteSnippet(c)
+	case "chi":
+		return chiRouteSnippet(c)
+	default:
+		return ginRouteSnippet(c)
+	}
 }
 
 func ginRouteSnippet(c *CRUDConfig) string {
@@ -462,6 +568,63 @@ func ginRouteSnippet(c *CRUDConfig) string {
 		c.Name, c.Name, c.Name,
 		c.Lower, c.Plural,
 		c.Lower, c.Lower, c.Lower, c.Lower, c.Lower,
+	)
+}
+
+func fiberRouteSnippet(c *CRUDConfig) string {
+	return fmt.Sprintf(
+		`// %s routes
+	{
+		h := handler.New%sHandler(service.New%sService(repository.New%sRepository(db)))
+		%s := api.Group("/%s")
+		%s.Get("", h.List)
+		%s.Get("/:id", h.Get)
+		%s.Post("", h.Create)
+		%s.Put("/:id", h.Update)
+		%s.Delete("/:id", h.Delete)
+	}`,
+		c.Name,
+		c.Name, c.Name, c.Name,
+		c.Lower, c.Plural,
+		c.Lower, c.Lower, c.Lower, c.Lower, c.Lower,
+	)
+}
+
+func echoRouteSnippet(c *CRUDConfig) string {
+	return fmt.Sprintf(
+		`// %s routes
+	{
+		h := handler.New%sHandler(service.New%sService(repository.New%sRepository(db)))
+		%s := api.Group("/%s")
+		%s.GET("", h.List)
+		%s.GET("/:id", h.Get)
+		%s.POST("", h.Create)
+		%s.PUT("/:id", h.Update)
+		%s.DELETE("/:id", h.Delete)
+	}`,
+		c.Name,
+		c.Name, c.Name, c.Name,
+		c.Lower, c.Plural,
+		c.Lower, c.Lower, c.Lower, c.Lower, c.Lower,
+	)
+}
+
+func chiRouteSnippet(c *CRUDConfig) string {
+	return fmt.Sprintf(
+		`// %s routes
+	{
+		h := handler.New%sHandler(service.New%sService(repository.New%sRepository(db)))
+		r.Route("/api/v1/%s", func(sub chi.Router) {
+			sub.Get("/", h.List)
+			sub.Get("/{id}", h.Get)
+			sub.Post("/", h.Create)
+			sub.Put("/{id}", h.Update)
+			sub.Delete("/{id}", h.Delete)
+		})
+	}`,
+		c.Name,
+		c.Name, c.Name, c.Name,
+		c.Plural,
 	)
 }
 

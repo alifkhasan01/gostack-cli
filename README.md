@@ -109,7 +109,7 @@ gostack update --check   # cek saja tanpa install
 
 ```bash
 gostack version
-# GoStack CLI v0.1.0
+# GoStack CLI v0.3.0
 #   Commit    : abc1234
 #   Built     : 2025-01-01T00:00:00Z
 #   Go        : go1.22.0
@@ -150,13 +150,18 @@ my-api/
 │   ├── config/         # env config
 │   ├── database/       # db connection
 │   ├── entity/         # domain models
+│   ├── errors/         # custom error types
 │   ├── handler/        # HTTP handlers
-│   ├── middleware/      # CORS, JWT
+│   ├── logger/         # structured JSON logger
+│   ├── middleware/     # CORS, JWT, RequestID, Logger, Recovery
 │   ├── repository/     # data access layer
-│   ├── routes/         # route registration
-│   └── service/        # business logic
+│   ├── response/       # standard API response helpers
+│   ├── routes/         # route registration + health checks
+│   ├── service/        # business logic
+│   └── validator/      # request validation
 ├── migrations/         # SQL files
 ├── docs/               # Swagger output
+├── .github/workflows/  # CI pipeline
 ├── .env.example
 ├── Dockerfile
 ├── docker-compose.yml
@@ -204,8 +209,9 @@ template-gin-clean/
 |---------|----------|
 | **v0.1** ✅ | Create project, remote template, placeholder replacement, built-in scaffold |
 | **v0.2** ✅ | Generate handler/service/repository/migration/module, CRUD generator, route injection |
-| **v0.3** 🔜 | Swagger integration, gRPC starter, GraphQL starter |
-| **v0.4** 🔜 | Worker starter, background job scaffold |
+| **v0.3** ✅ | Middleware (RequestID, Logger, Recovery, Timeout, RateLimit), utility packages (logger, response, validator, errors), health check endpoints (`/live`, `/ready`), contoh test, GitHub Actions CI |
+| **v0.4** 🔜 | Swagger integration, gRPC starter, GraphQL starter |
+| **v0.5** 🔜 | Worker starter, background job scaffold |
 | **v1.0** 🔜 | Plugin system, community templates, template marketplace |
 
 ---

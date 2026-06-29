@@ -1,7 +1,7 @@
 APP_NAME={{PROJECT_NAME}}
 BIN_DIR=./bin
 
-.PHONY: run build tidy test migrate-up migrate-down
+.PHONY: run build tidy lint test clean migrate migrate-up migrate-down
 
 run:
 	go run ./cmd/api
@@ -12,8 +12,17 @@ build:
 tidy:
 	go mod tidy
 
+lint:
+	golangci-lint run ./...
+
 test:
 	go test ./... -v
+
+clean:
+	rm -rf $(BIN_DIR)
+
+migrate:
+	goose postgres "$(DB_DSN)" up -dir ./migrations
 
 migrate-up:
 	goose postgres "$(DB_DSN)" up -dir ./migrations
