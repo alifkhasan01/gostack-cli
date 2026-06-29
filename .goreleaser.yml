@@ -78,14 +78,3 @@ release:
 
     Or download the binary for your platform from the assets below.
 
-homebrew_casks:
-  - name: gostack
-    repository:
-      owner: alifkhasan01
-      name: homebrew-gostack
-      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/alifkhasan01/gostack-cli"
-    description: "Modern Go Project Scaffolding inspired by Vite"
-    license: "MIT"
-    binaries:
-      - gostack
