@@ -2,10 +2,10 @@
 
 > Modern Go Project Scaffolding — inspired by Vite.
 
-[![CI](https://github.com/gostack/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/gostack/cli/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gostack/cli)](https://goreportcard.com/report/github.com/gostack/cli)
+[![CI](https://github.com/alifkhasan01/gostack-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/alifkhasan01/gostack-cli/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/alifkhasan01/gostack-cli)](https://goreportcard.com/report/github.com/alifkhasan01/gostack-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/gostack/cli)](https://github.com/gostack/cli/releases)
+[![Release](https://img.shields.io/github/v/release/alifkhasan01/gostack-cli)](https://github.com/alifkhasan01/gostack-cli/releases)
 
 GoStack CLI membuat project Go backend siap pakai dalam hitungan detik. Pilih framework, arsitektur, database, dan ORM — CLI akan mengunduh starter template, mengganti placeholder, lalu menjalankan `go mod tidy` secara otomatis.
 
@@ -14,10 +14,10 @@ GoStack CLI membuat project Go backend siap pakai dalam hitungan detik. Pilih fr
 ## Installation
 
 ```bash
-go install github.com/gostack/cli@latest
+go install github.com/alifkhasan01/gostack-cli@latest
 ```
 
-Atau download binary langsung dari [Releases](https://github.com/gostack/cli/releases).
+Atau download binary langsung dari [Releases](https://github.com/alifkhasan01/gostack-cli/releases).
 
 ---
 

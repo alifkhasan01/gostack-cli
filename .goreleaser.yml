@@ -54,8 +54,8 @@ changelog:
 
 release:
   github:
-    owner: gostack
-    name: cli
+    owner: alifkhasan01
+    name: gostack-cli
   name_template: "v{{.Version}}"
   draft: false
   prerelease: auto
@@ -71,9 +71,9 @@ release:
 brews:
   - name: gostack
     repository:
-      owner: gostack
-      name: homebrew-tap
-    homepage: "https://github.com/gostack/cli"
+      owner: alifkhasan01
+      name: homebrew-gostack
+    homepage: "https://github.com/alifkhasan01/gostack-cli"
     description: "Modern Go Project Scaffolding inspired by Vite"
     license: "MIT"
     install: |
