@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gostack/cli/internal/cli"
+	"github.com/alifkhasan01/gostack-cli/internal/cli"
 )
 
 func main() {

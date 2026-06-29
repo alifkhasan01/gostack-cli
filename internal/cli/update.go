@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/gostack/cli/internal/printer"
-	"github.com/gostack/cli/internal/updater"
+	"github.com/alifkhasan01/gostack-cli/internal/printer"
+	"github.com/alifkhasan01/gostack-cli/internal/updater"
 	"github.com/spf13/cobra"
 )
 
@@ -22,34 +22,41 @@ func init() {
 }
 
 func runUpdate(_ *cobra.Command, _ []string) error {
-	printer.Step("🔍", "Checking for updates ...")
+	sp := printer.NewSpinner("Checking for updates ...")
+	sp.Start()
 
 	release, err := updater.CheckLatest()
 	if err != nil {
-		return fmt.Errorf("could not reach GitHub: %w\nCheck your internet connection and try again.", err)
+		sp.Fail("Could not reach GitHub")
+		return fmt.Errorf("%w\nCheck your internet connection or visit: https://github.com/alifkhasan01/gostack-cli/releases", err)
 	}
+	sp.Stop()
 
 	latest := release.TagName
-	printer.Dim(fmt.Sprintf("Current version : %s", Version))
-	printer.Dim(fmt.Sprintf("Latest version  : %s", latest))
+	printer.Dim(fmt.Sprintf("Current  : %s", Version))
+	printer.Dim(fmt.Sprintf("Latest   : %s", latest))
 
 	if !updater.IsNewer(Version, latest) {
-		printer.Success(fmt.Sprintf("You are already on the latest version (%s)", Version))
+		printer.Success(fmt.Sprintf("Already up to date (%s)", Version))
 		return nil
 	}
 
-	fmt.Printf("\n  🆕 New version available: %s\n", latest)
+	fmt.Printf("\n")
+	printer.Step("🆕", fmt.Sprintf("New version available: %s", latest))
 	if release.Body != "" {
-		printer.Dim("Release notes:")
-		printer.Dim(release.Body)
+		printer.Dim("─── Release Notes ───────────────────────")
+		for _, line := range splitLines(release.Body) {
+			printer.Dim(line)
+		}
+		printer.Dim("─────────────────────────────────────────")
 	}
 
 	if checkOnly {
-		fmt.Printf("\n  Run %s to install the update.\n", "`gostack update`")
+		fmt.Printf("\n  Run %s to install.\n", "`gostack update`")
 		return nil
 	}
 
-	// Find the right asset for this platform
+	// Find asset for this platform
 	assetName := updater.PlatformAssetName()
 	var downloadURL string
 	for _, a := range release.Assets {
@@ -61,23 +68,45 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 
 	if downloadURL == "" {
 		return fmt.Errorf(
-			"no binary found for %s in release %s\n"+
-				"Download manually from: https://github.com/gostack/cli/releases",
+			"no binary for %s in release %s\nDownload manually: https://github.com/alifkhasan01/gostack-cli/releases",
 			assetName, latest,
 		)
 	}
 
-	printer.Step("⬇️ ", fmt.Sprintf("Downloading %s ...", assetName))
+	sp2 := printer.NewSpinner(fmt.Sprintf("Downloading %s ...", assetName))
+	sp2.Start()
 	tmpPath, err := updater.DownloadAsset(downloadURL)
 	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		sp2.Fail("Download failed")
+		return fmt.Errorf("download: %w", err)
 	}
+	sp2.Done("Downloaded")
 
-	printer.Step("🔄", "Installing update ...")
+	sp3 := printer.NewSpinner("Installing update ...")
+	sp3.Start()
 	if err := updater.ReplaceCurrentBinary(tmpPath); err != nil {
-		return fmt.Errorf("install failed: %w\nTry: sudo gostack update", err)
+		sp3.Fail("Install failed — try: sudo gostack update")
+		return fmt.Errorf("install: %w", err)
 	}
+	sp3.Done(fmt.Sprintf("Updated to %s", latest))
 
-	printer.Success(fmt.Sprintf("Updated to %s — restart your shell if needed.", latest))
+	printer.Dim("Restart your shell if the version doesn't change immediately.")
 	return nil
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	current := ""
+	for _, c := range s {
+		if c == '\n' {
+			lines = append(lines, current)
+			current = ""
+		} else {
+			current += string(c)
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
 }

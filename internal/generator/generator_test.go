@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gostack/cli/internal/generator"
+	"github.com/alifkhasan01/gostack-cli/internal/generator"
 )
 
 // setupFakeProject creates a temp dir with a go.mod so findProjectRoot works.

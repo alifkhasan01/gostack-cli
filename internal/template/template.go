@@ -13,7 +13,7 @@ import (
 
 const (
 	// GitHub org where templates live.
-	githubOrg = "gostack-templates"
+	githubOrg = "alifkhasan01"
 	// Base URL for downloading a repo as zip from GitHub.
 	githubZipURL = "https://codeload.github.com/%s/%s/zip/refs/heads/main"
 )

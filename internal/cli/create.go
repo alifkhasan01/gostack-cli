@@ -5,12 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gostack/cli/internal/printer"
-	"github.com/gostack/cli/internal/replacer"
-	"github.com/gostack/cli/internal/runner"
-	"github.com/gostack/cli/internal/scaffold"
-	"github.com/gostack/cli/internal/template"
-	"github.com/gostack/cli/internal/wizard"
+	"github.com/alifkhasan01/gostack-cli/internal/printer"
+	"github.com/alifkhasan01/gostack-cli/internal/replacer"
+	"github.com/alifkhasan01/gostack-cli/internal/runner"
+	"github.com/alifkhasan01/gostack-cli/internal/scaffold"
+	"github.com/alifkhasan01/gostack-cli/internal/template"
+	"github.com/alifkhasan01/gostack-cli/internal/wizard"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +25,6 @@ var createCmd = &cobra.Command{
 }
 
 func runCreate(_ *cobra.Command, args []string) error {
-	// Pre-fill project name if passed as argument
 	projectName := ""
 	if len(args) > 0 {
 		projectName = args[0]
@@ -44,7 +43,6 @@ func runCreate(_ *cobra.Command, args []string) error {
 	}
 	destDir := filepath.Join(cwd, cfg.ProjectName)
 
-	// Guard: refuse to overwrite existing directory
 	if _, err := os.Stat(destDir); err == nil {
 		return fmt.Errorf("directory '%s' already exists", cfg.ProjectName)
 	}
@@ -53,13 +51,16 @@ func runCreate(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("create project directory: %w", err)
 	}
 
-	// --- Try remote template first, fall back to built-in scaffold ---
-	printer.Step("📦", fmt.Sprintf("Fetching template: %s-%s ...", cfg.Framework, cfg.Architecture))
+	// --- Download or scaffold ---
+	sp := printer.NewSpinner(fmt.Sprintf("Fetching template: %s-%s", cfg.Framework, cfg.Architecture))
+	sp.Start()
 
 	remoteErr := template.Download(cfg.Framework, cfg.Architecture, destDir)
 	if remoteErr != nil {
-		printer.Warn(fmt.Sprintf("Remote template unavailable (%v), using built-in scaffold ...", remoteErr))
+		sp.Fail(fmt.Sprintf("Remote template unavailable, using built-in scaffold (%s-%s)", cfg.Framework, cfg.Architecture))
 
+		sp2 := printer.NewSpinner("Generating project structure ...")
+		sp2.Start()
 		if err := scaffold.Generate(destDir, scaffold.Config{
 			ProjectName:  cfg.ProjectName,
 			ModuleName:   cfg.ModuleName,
@@ -71,30 +72,42 @@ func runCreate(_ *cobra.Command, args []string) error {
 			Docker:       cfg.Docker,
 			Swagger:      cfg.Swagger,
 		}); err != nil {
+			sp2.Fail("Scaffold failed")
 			os.RemoveAll(destDir)
 			return fmt.Errorf("scaffold: %w", err)
 		}
+		sp2.Done("Project structure generated")
 	} else {
-		// Replace placeholders in downloaded template
-		printer.Step("🔧", "Replacing placeholders ...")
+		sp.Done(fmt.Sprintf("Template downloaded: %s-%s", cfg.Framework, cfg.Architecture))
+
+		sp2 := printer.NewSpinner("Replacing placeholders ...")
+		sp2.Start()
 		if err := replacer.ReplaceAll(destDir, replacer.Config{
 			ModuleName:  cfg.ModuleName,
 			ProjectName: cfg.ProjectName,
 		}); err != nil {
+			sp2.Fail("Replace failed")
 			return fmt.Errorf("replace placeholders: %w", err)
 		}
+		sp2.Done("Placeholders replaced")
 	}
 
 	// --- git init ---
-	printer.Step("🗂 ", "Initializing git ...")
+	sp3 := printer.NewSpinner("Initializing git repository ...")
+	sp3.Start()
 	if err := runner.GitInit(destDir); err != nil {
-		printer.Warn("git init skipped: " + err.Error())
+		sp3.Fail("git init skipped: " + err.Error())
+	} else {
+		sp3.Done("Git repository initialized")
 	}
 
 	// --- go mod tidy ---
-	printer.Step("🧹", "Running go mod tidy ...")
+	sp4 := printer.NewSpinner("Running go mod tidy ...")
+	sp4.Start()
 	if err := runner.GoModTidy(destDir); err != nil {
-		printer.Warn("go mod tidy skipped (run it manually): " + err.Error())
+		sp4.Fail("go mod tidy skipped — run it manually inside the project")
+	} else {
+		sp4.Done("Dependencies resolved")
 	}
 
 	// --- Done ---

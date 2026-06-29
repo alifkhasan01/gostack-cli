@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gostack/cli/internal/scaffold"
+	"github.com/alifkhasan01/gostack-cli/internal/scaffold"
 )
 
 func TestGenerate_Gin_Clean(t *testing.T) {

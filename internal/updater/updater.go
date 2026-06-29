@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	githubRepo  = "gostack/cli"
+	githubRepo  = "alifkhasan01/gostack-cli"
 	releasesAPI = "https://api.github.com/repos/" + githubRepo + "/releases/latest"
 )
 

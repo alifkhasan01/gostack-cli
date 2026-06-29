@@ -3,7 +3,7 @@ package updater_test
 import (
 	"testing"
 
-	"github.com/gostack/cli/internal/updater"
+	"github.com/alifkhasan01/gostack-cli/internal/updater"
 )
 
 func TestIsNewer(t *testing.T) {

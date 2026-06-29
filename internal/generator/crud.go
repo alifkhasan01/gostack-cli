@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/gostack/cli/internal/project"
+	"github.com/alifkhasan01/gostack-cli/internal/project"
 )
 
 // CRUDConfig holds everything needed to generate a full CRUD module.

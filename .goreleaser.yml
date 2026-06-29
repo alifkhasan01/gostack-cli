@@ -24,9 +24,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X github.com/gostack/cli/internal/cli.Version={{.Version}}
-      - -X github.com/gostack/cli/internal/cli.Commit={{.Commit}}
-      - -X github.com/gostack/cli/internal/cli.BuildDate={{.Date}}
+      - -X github.com/alifkhasan01/gostack-cli/internal/cli.Version={{.Version}}
+      - -X github.com/alifkhasan01/gostack-cli/internal/cli.Commit={{.Commit}}
+      - -X github.com/alifkhasan01/gostack-cli/internal/cli.BuildDate={{.Date}}
 
 archives:
   - id: gostack
@@ -63,7 +63,7 @@ release:
     ## Installation
 
     ```bash
-    go install github.com/gostack/cli@latest
+    go install github.com/alifkhasan01/gostack-cli@latest
     ```
 
     Or download the binary for your platform from the assets below.

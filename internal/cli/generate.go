@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gostack/cli/internal/generator"
+	"github.com/alifkhasan01/gostack-cli/internal/generator"
 	"github.com/spf13/cobra"
 )
 

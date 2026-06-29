@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/gostack/cli/internal/project"
+	"github.com/alifkhasan01/gostack-cli/internal/project"
 )
 
 // Config mirrors wizard.ProjectConfig — kept separate to avoid circular deps.
@@ -556,7 +556,7 @@ migrate-down:
 
 const readmeTmpl = `# {{.ProjectName}}
 
-Generated with [GoStack CLI](https://github.com/gostack/cli).
+Generated with [GoStack CLI](https://github.com/alifkhasan01/gostack-cli).
 
 ## Stack
 
