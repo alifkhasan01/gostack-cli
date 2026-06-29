@@ -14,7 +14,7 @@ GoStack CLI membuat project Go backend siap pakai dalam hitungan detik. Pilih fr
 ## Installation
 
 ```bash
-go install github.com/alifkhasan01/gostack-cli@latest
+go install github.com/alifkhasan01/gostack-cli/cmd/gostack@latest
 ```
 
 Atau download binary langsung dari [Releases](https://github.com/alifkhasan01/gostack-cli/releases).
