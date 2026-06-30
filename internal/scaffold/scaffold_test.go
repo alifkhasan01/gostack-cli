@@ -29,13 +29,17 @@ func TestGenerate_Gin_Clean(t *testing.T) {
 
 	mustExist(t, dir,
 		"go.mod",
-		"cmd/api/main.go",
+		"cmd/server/main.go",
 		"internal/config/config.go",
-		"internal/database/database.go",
-		"internal/routes/routes.go",
-		"internal/middleware/cors.go",
-		"internal/middleware/jwt.go",
-		"internal/entity/user.go",
+		"internal/model/user.go",
+		"internal/handler/user.go",
+		"internal/middleware/logger.go",
+		"internal/middleware/auth.go",
+		"internal/service/user.go",
+		"internal/repository/user.go",
+		"pkg/jwt/jwt.go",
+		"pkg/response/response.go",
+		"pkg/validator/validator.go",
 		".env",
 		".env.example",
 		".gitignore",
@@ -66,8 +70,8 @@ func TestGenerate_Fiber_NoDocker_NoSwagger(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	mustExist(t, dir, "go.mod", "cmd/api/main.go", "internal/routes/routes.go")
-	mustNotExist(t, dir, "Dockerfile", "docker-compose.yml", "docs/.gitkeep", "internal/middleware/jwt.go")
+	mustExist(t, dir, "go.mod", "cmd/server/main.go")
+	mustNotExist(t, dir, "Dockerfile", "docker-compose.yml", "pkg/jwt/jwt.go")
 }
 
 func TestGenerate_PlaceholderReplaced(t *testing.T) {
@@ -107,9 +111,171 @@ func TestGenerate_AllFrameworks(t *testing.T) {
 			if err := scaffold.Generate(dir, cfg); err != nil {
 				t.Fatalf("Generate(%s) failed: %v", fw, err)
 			}
-			mustExist(t, dir, "internal/routes/routes.go", "internal/middleware/cors.go")
+			mustExist(t, dir, "internal/middleware/logger.go", "internal/middleware/auth.go")
 		})
 	}
+}
+
+func TestGenerate_CLI_Cobra(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := scaffold.Config{
+		ProjectName: "mycli",
+		ModuleName:  "github.com/test/mycli",
+		Type:        "cli",
+		CLILib:      "cobra",
+		Docker:      true,
+	}
+
+	if err := scaffold.Generate(dir, cfg); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	mustExist(t, dir,
+		"go.mod",
+		"main.go",
+		"cmd/root.go",
+		"cmd/init.go",
+		"cmd/build.go",
+		"cmd/run.go",
+		"internal/config/config.go",
+		"internal/runner/runner.go",
+		"internal/output/printer.go",
+		"pkg/util/file.go",
+		"Makefile",
+		"README.md",
+		".goreleaser.yml",
+		"Dockerfile",
+	)
+}
+
+func TestGenerate_CLI_Plain(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := scaffold.Config{
+		ProjectName: "mycli",
+		ModuleName:  "github.com/test/mycli",
+		Type:        "cli",
+		CLILib:      "plain",
+		Docker:      false,
+	}
+
+	if err := scaffold.Generate(dir, cfg); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	mustExist(t, dir,
+		"go.mod",
+		"main.go",
+		"cmd/root.go",
+		"internal/config/config.go",
+	)
+	mustNotExist(t, dir, "Dockerfile", "cmd/init.go")
+}
+
+func TestGenerate_Microservice(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := scaffold.Config{
+		ProjectName: "mysvc",
+		ModuleName:  "github.com/test/mysvc",
+		Type:        "microservice",
+		Services:    "api,worker",
+	}
+
+	if err := scaffold.Generate(dir, cfg); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	mustExist(t, dir,
+		"go.mod",
+		"Makefile",
+		"shared/go.mod",
+		"shared/logger/logger.go",
+		"shared/middleware/auth.go",
+		"services/api-service/cmd/main.go",
+		"services/api-service/internal/handler/api.go",
+		"services/api-service/internal/service/api.go",
+		"services/api-service/internal/repository/api.go",
+		"services/api-service/internal/model/api.go",
+		"services/api-service/Dockerfile",
+		"services/api-service/go.mod",
+		"services/worker-service/cmd/main.go",
+		"services/worker-service/internal/handler/worker.go",
+		"gateway/cmd/main.go",
+		"gateway/internal/proxy/proxy.go",
+		"infra/docker-compose.yml",
+		"infra/k8s/api-deployment.yaml",
+		"infra/k8s/worker-deployment.yaml",
+		"infra/nginx/nginx.conf",
+	)
+}
+
+func TestGenerate_Fullstack(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := scaffold.Config{
+		ProjectName:    "myapp",
+		ModuleName:     "github.com/test/myapp",
+		Type:           "fullstack",
+		Database:       "postgres",
+		CSSFramework:   "tailwind",
+		TemplateEngine: "html",
+		Docker:         true,
+	}
+
+	if err := scaffold.Generate(dir, cfg); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	mustExist(t, dir,
+		"go.mod",
+		"cmd/web/main.go",
+		"internal/handler/home.go",
+		"internal/handler/auth.go",
+		"internal/template/renderer.go",
+		"internal/model/user.go",
+		"internal/repository/user.go",
+		"internal/service/user.go",
+		"web/static/css/style.css",
+		"web/static/js/app.js",
+		"web/templates/layout/base.html",
+		"web/templates/pages/home.html",
+		"web/templates/components/navbar.html",
+		".env",
+		".env.example",
+		"Makefile",
+		"README.md",
+		"Dockerfile",
+		".gitignore",
+	)
+
+	checkContains(t, filepath.Join(dir, "README.md"), "postgres")
+}
+
+func TestGenerate_Fullstack_NoDB(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := scaffold.Config{
+		ProjectName: "simpleweb",
+		ModuleName:  "github.com/test/simpleweb",
+		Type:        "fullstack",
+		Database:    "none",
+		Docker:      false,
+	}
+
+	if err := scaffold.Generate(dir, cfg); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	mustExist(t, dir,
+		"go.mod",
+		"cmd/web/main.go",
+		"internal/handler/home.go",
+		"web/static/css/style.css",
+		"web/templates/layout/base.html",
+	)
+	mustNotExist(t, dir, "Dockerfile", "internal/model/user.go")
 }
 
 // -------------------------------------------------------------------------

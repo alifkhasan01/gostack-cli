@@ -382,6 +382,10 @@ func crudHandlerTmpl(framework string) string {
 	switch framework {
 	case "fiber":
 		return crudHandlerFiberTmpl
+	case "echo":
+		return crudHandlerEchoTmpl
+	case "chi":
+		return crudHandlerChiTmpl
 	default:
 		return crudHandlerGinTmpl
 	}
@@ -502,6 +506,199 @@ func (c *CRUDConfig) writeMigration() error {
 	return writeCRUDTemplate(crudMigrationTmpl, dir, fileName, c)
 }
 
+const crudHandlerEchoTmpl = `package handler
+
+import (
+	"net/http"
+	"strconv"
+
+	"{{.Meta.ModuleName}}/internal/entity"
+	"{{.Meta.ModuleName}}/internal/service"
+	"github.com/labstack/echo/v4"
+)
+
+type {{.Name}}Handler struct {
+	svc service.{{.Name}}Service
+}
+
+func New{{.Name}}Handler(svc service.{{.Name}}Service) *{{.Name}}Handler {
+	return &{{.Name}}Handler{svc: svc}
+}
+
+func (h *{{.Name}}Handler) List(c echo.Context) error {
+	items, err := h.svc.GetAll()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+func (h *{{.Name}}Handler) Get(c echo.Context) error {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	}
+	item, err := h.svc.GetByID(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (h *{{.Name}}Handler) Create(c echo.Context) error {
+	var req entity.Create{{.Name}}Request
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	item, err := h.svc.Create(req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, item)
+}
+
+func (h *{{.Name}}Handler) Update(c echo.Context) error {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	}
+	var req entity.Update{{.Name}}Request
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	item, err := h.svc.Update(id, req)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+func (h *{{.Name}}Handler) Delete(c echo.Context) error {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid id"})
+	}
+	if err := h.svc.Delete(id); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+`
+
+const crudHandlerChiTmpl = `package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"{{.Meta.ModuleName}}/internal/entity"
+	"{{.Meta.ModuleName}}/internal/service"
+)
+
+type {{.Name}}Handler struct {
+	svc service.{{.Name}}Service
+}
+
+func New{{.Name}}Handler(svc service.{{.Name}}Service) *{{.Name}}Handler {
+	return &{{.Name}}Handler{svc: svc}
+}
+
+func (h *{{.Name}}Handler) List(w http.ResponseWriter, r *http.Request) {
+	items, err := h.svc.GetAll()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+func (h *{{.Name}}Handler) Get(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid id"})
+		return
+	}
+	item, err := h.svc.GetByID(id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+func (h *{{.Name}}Handler) Create(w http.ResponseWriter, r *http.Request) {
+	var req entity.Create{{.Name}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	item, err := h.svc.Create(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(item)
+}
+
+func (h *{{.Name}}Handler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid id"})
+		return
+	}
+	var req entity.Update{{.Name}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	item, err := h.svc.Update(id, req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
+func (h *{{.Name}}Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid id"})
+		return
+	}
+	if err := h.svc.Delete(id); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+`
+
 // -------------------------------------------------------------------------
 // Route injection
 // -------------------------------------------------------------------------
@@ -515,6 +712,10 @@ func (c *CRUDConfig) injectRoutes() error {
 	if _, err := os.Stat(routesFile); os.IsNotExist(err) {
 		fmt.Printf("  ⚠️  routes.go not found, skipping route injection\n")
 		return nil
+	}
+
+	if err := c.injectImports(routesFile); err != nil {
+		return fmt.Errorf("inject imports: %w", err)
 	}
 
 	content, err := os.ReadFile(routesFile)
@@ -537,6 +738,55 @@ func (c *CRUDConfig) injectRoutes() error {
 	}
 	fmt.Printf("  ✅ Injected routes: /api/v1/%s\n", c.Plural)
 	return nil
+}
+
+// injectImports adds missing handler, service, repository imports to routes.go.
+func (c *CRUDConfig) injectImports(routesFile string) error {
+	content, err := os.ReadFile(routesFile)
+	if err != nil {
+		return err
+	}
+
+	src := string(content)
+
+	needed := []string{
+		fmt.Sprintf("%s/internal/handler", c.Meta.ModuleName),
+		fmt.Sprintf("%s/internal/repository", c.Meta.ModuleName),
+		fmt.Sprintf("%s/internal/service", c.Meta.ModuleName),
+	}
+
+	var toAdd []string
+	for _, imp := range needed {
+		if !strings.Contains(src, imp) {
+			toAdd = append(toAdd, imp)
+		}
+	}
+
+	if len(toAdd) == 0 {
+		return nil
+	}
+
+	// Find the import block's closing paren
+	importStart := strings.Index(src, "import (")
+	if importStart == -1 {
+		return nil
+	}
+
+	rest := src[importStart:]
+	closeIdx := strings.Index(rest, "\n)")
+	if closeIdx == -1 {
+		return nil
+	}
+
+	insertAt := importStart + closeIdx
+	var sb strings.Builder
+	sb.WriteString(src[:insertAt])
+	for _, imp := range toAdd {
+		sb.WriteString(fmt.Sprintf("\n\t\"%s\"", imp))
+	}
+	sb.WriteString(src[insertAt:])
+
+	return os.WriteFile(routesFile, []byte(sb.String()), 0644)
 }
 
 func routeSnippet(c *CRUDConfig) string {

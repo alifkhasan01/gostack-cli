@@ -14,15 +14,36 @@ import (
 
 // Config mirrors wizard.ProjectConfig — kept separate to avoid circular deps.
 type Config struct {
-	ProjectName  string
-	ModuleName   string
-	Framework    string
-	Architecture string
-	Database     string
-	ORM          string
-	Auth         string
-	Docker       bool
-	Swagger      bool
+	ProjectName    string
+	ModuleName     string
+	Type           string
+	Framework      string
+	Architecture   string
+	Database       string
+	ORM            string
+	Auth           string
+	Docker         bool
+	Swagger        bool
+	Version        string
+	CLILib         string
+	Services       string
+	CSSFramework   string
+	TemplateEngine string
+}
+
+// ServicesList splits cfg.Services by comma and trims whitespace.
+func (cfg Config) ServicesList() []string {
+	if cfg.Services == "" {
+		return nil
+	}
+	parts := strings.Split(cfg.Services, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Generate writes a full project skeleton into destDir.
@@ -33,10 +54,19 @@ func Generate(destDir string, cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 			return err
 		}
-		rendered, err := renderTemplate(content, cfg)
-		if err != nil {
-			return fmt.Errorf("render %s: %w", relPath, err)
+
+		var rendered string
+		var err error
+		if strings.HasSuffix(relPath, ".goreleaser.yml") {
+			// Pre-rendered with fmt.Sprintf — skip template render
+			rendered = content
+		} else {
+			rendered, err = renderTemplate(content, cfg)
+			if err != nil {
+				return fmt.Errorf("render %s: %w", relPath, err)
+			}
 		}
+
 		if err := os.WriteFile(fullPath, []byte(rendered), 0644); err != nil {
 			return err
 		}
@@ -47,11 +77,13 @@ func Generate(destDir string, cfg Config) error {
 	return project.Write(destDir, project.Meta{
 		ProjectName:  cfg.ProjectName,
 		ModuleName:   cfg.ModuleName,
+		Type:         cfg.Type,
 		Framework:    cfg.Framework,
 		Architecture: cfg.Architecture,
 		Database:     cfg.Database,
 		ORM:          cfg.ORM,
 		Auth:         cfg.Auth,
+		GoStackVer:   cfg.Version,
 	})
 }
 
@@ -112,91 +144,189 @@ func frameworkImport(cfg Config) string {
 
 // buildFileMap returns all files to be created, keyed by relative path.
 func buildFileMap(cfg Config) map[string]string {
-	_ = dbDriver(cfg)
-	_ = ormImport(cfg)
-	fw := frameworkImport(cfg)
+	switch cfg.Type {
+	case "cli":
+		return buildCLIFileMap(cfg)
+	case "microservice":
+		return buildMicroserviceFileMap(cfg)
+	case "fullstack":
+		return buildFullstackFileMap(cfg)
+	default:
+		return buildRESTAPIFileMap(cfg)
+	}
+}
 
+func buildRESTAPIFileMap(cfg Config) map[string]string {
 	files := map[string]string{
-		// --- go.mod ---
 		"go.mod": goModTmpl,
-
-		// --- main entry point ---
-		"cmd/api/main.go": mainGoTmpl,
-
-		// --- config ---
+		"cmd/server/main.go": mainGoTmpl,
 		"internal/config/config.go": configGoTmpl,
-
-		// --- database ---
-		"internal/database/database.go": databaseGoTmpl,
-
-		// --- routes ---
-		"internal/routes/routes.go": routesGoTmpl(cfg.Framework),
-
-		// --- middleware ---
-		"internal/middleware/cors.go":       corsGoTmpl(cfg.Framework),
-		"internal/middleware/requestid.go":  requestIDGoTmpl(cfg.Framework),
-		"internal/middleware/logger.go":     loggerGoTmpl(cfg.Framework),
-		"internal/middleware/recovery.go":   recoveryGoTmpl(cfg.Framework),
-		"internal/middleware/timeout.go":    timeoutGoTmpl(cfg.Framework),
-		"internal/middleware/ratelimit.go":  rateLimitGoTmpl(cfg.Framework),
-
-		// --- entity example ---
-		"internal/entity/user.go": entityGoTmpl,
-
-		// --- handler example ---
-		"internal/handler/user_handler.go": handlerGoTmpl(cfg.Framework),
-
-		// --- service example ---
-		"internal/service/user_service.go": serviceGoTmpl,
-
-		// --- repository example ---
-		"internal/repository/user_repository.go": repositoryGoTmpl,
-
-		// --- example tests ---
-		"internal/handler/user_handler_test.go": handlerTestGoTmpl,
-		"internal/service/user_service_test.go": serviceTestGoTmpl,
-
-		// --- utility packages ---
-		"internal/logger/logger.go":         loggerGoTmplFile,
-		"internal/response/response.go":     responseGoTmplFile,
-		"internal/validator/validator.go":   validatorGoTmplFile,
-		"internal/errors/errors.go":         errorsGoTmplFile,
-
-		// --- migrations ---
+		"internal/model/user.go": modelGoTmplFn(cfg),
+		"internal/handler/user.go": handlerGoTmpl(cfg.Framework),
+		"internal/service/user.go": serviceGoTmpl,
+		"internal/repository/user.go": repositoryGoTmpl,
+		"internal/middleware/logger.go": loggerMidTmpl(cfg.Framework),
+		"internal/middleware/auth.go":   authMidTmpl(cfg.Framework),
+		"internal/handler/user_test.go": handlerTestGoTmpl,
+		"internal/service/user_test.go": serviceTestTmpl,
+		"pkg/response/response.go":   responsePkgTmpl,
+		"pkg/validator/validator.go": validatorPkgTmpl,
 		"migrations/.gitkeep": "",
-
-		// --- env ---
+		"docs/.gitkeep": "",
 		".env":         envTmpl,
 		".env.example": envTmpl,
-
-		// --- gitignore ---
 		".gitignore": gitignoreTmpl,
-
-		// --- Makefile ---
 		"Makefile": makefileTmpl,
-
-		// --- README ---
 		"README.md": readmeTmpl,
 	}
 
-	// Docker
 	if cfg.Docker {
 		files["Dockerfile"] = dockerfileTmpl(cfg.Framework)
 		files["docker-compose.yml"] = dockerComposeTmpl
 	}
 
-	// Swagger
-	if cfg.Swagger {
-		files["docs/.gitkeep"] = ""
-	}
-
-	// CI
 	files[".github/workflows/ci.yml"] = ciGoTmpl
 
-	// Auth
 	if cfg.Auth == "jwt" {
-		files["internal/middleware/jwt.go"] = jwtMiddlewareTmpl(fw)
+		files["pkg/jwt/jwt.go"] = jwtPkgTmpl
 	}
+
+	return files
+}
+
+// ---------------------------------------------------------------------------
+// CLI tool scaffold
+// ---------------------------------------------------------------------------
+
+func buildCLIFileMap(cfg Config) map[string]string {
+	cliLib := cfg.CLILib
+	if cliLib == "" {
+		cliLib = "cobra"
+	}
+
+	files := map[string]string{
+		"go.mod": goModTmpl,
+		".gitignore":    gitignoreTmpl,
+		"Makefile":      cliMakefileTmpl,
+		"README.md":     cliReadmeTmpl,
+		".goreleaser.yml": goreleaserTmplFunc(cfg.ProjectName, cfg.Version),
+	}
+
+	if cliLib == "cobra" {
+		files["cmd/root.go"] = cobraRootTmpl
+		files["cmd/init.go"] = cobraInitTmpl
+		files["cmd/build.go"] = cobraBuildTmpl
+		files["cmd/run.go"] = cobraRunTmpl
+		files["main.go"] = cobraMainTmpl
+	} else {
+		files["cmd/root.go"] = plainRootTmpl
+		files["main.go"] = plainMainTmpl
+	}
+
+	files["internal/config/config.go"] = cliConfigTmpl
+	files["internal/runner/runner.go"] = cliRunnerTmpl
+	files["internal/output/printer.go"] = cliPrinterTmpl
+	files["pkg/util/file.go"] = cliUtilFileTmpl
+
+	if cfg.Docker {
+		files["Dockerfile"] = cliDockerfileTmpl
+	}
+
+	files[".github/workflows/ci.yml"] = ciGoTmpl
+
+	return files
+}
+
+// ---------------------------------------------------------------------------
+// Microservice scaffold
+// ---------------------------------------------------------------------------
+
+func buildMicroserviceFileMap(cfg Config) map[string]string {
+	files := map[string]string{
+		"go.mod": goModTmpl,
+		"Makefile": msMakefileTmpl,
+		".gitignore":  gitignoreTmpl,
+		"README.md":   msReadmeTmpl,
+	}
+
+	// Shared library
+	files["shared/go.mod"] = sharedGoModTmpl
+	files["shared/logger/logger.go"] = sharedLoggerTmpl
+	files["shared/middleware/auth.go"] = sharedMidAuthTmpl
+	files["shared/proto/.gitkeep"] = ""
+
+	services := cfg.ServicesList()
+	if len(services) == 0 {
+		services = []string{"user", "order", "notification"}
+	}
+
+	for _, svc := range services {
+		prefix := "services/" + svc + "-service"
+		svcModule := cfg.ModuleName + "/" + prefix
+
+		files[prefix+"/cmd/main.go"] = msMainTmpl(svcModule, svc)
+		files[prefix+"/internal/handler/"+svc+".go"] = msHandlerTmpl(svcModule, svc)
+		files[prefix+"/internal/service/"+svc+".go"] = msServiceTmpl(svcModule, svc)
+		files[prefix+"/internal/repository/"+svc+".go"] = msRepoTmpl(svcModule, svc)
+		files[prefix+"/internal/model/"+svc+".go"] = msModelTmpl(svc)
+		files[prefix+"/Dockerfile"] = msSvcDockerfileTmpl
+		files[prefix+"/go.mod"] = fmt.Sprintf(msSvcGoModTmpl, svcModule)
+	}
+
+	// Gateway
+	files["gateway/cmd/main.go"] = gwMainTmpl
+	files["gateway/internal/proxy/proxy.go"] = gwProxyTmpl
+	files["gateway/go.mod"] = fmt.Sprintf(msSvcGoModTmpl, cfg.ModuleName+"/gateway")
+
+	// Infra
+	files["infra/docker-compose.yml"] = msDockerComposeTmpl
+
+	// Kubernetes manifests
+	for _, svc := range services {
+		files["infra/k8s/"+svc+"-deployment.yaml"] = k8sDeploymentTmpl(svc)
+	}
+	files["infra/nginx/nginx.conf"] = nginxConfTmpl
+
+	return files
+}
+
+// ---------------------------------------------------------------------------
+// Fullstack scaffold
+// ---------------------------------------------------------------------------
+
+func buildFullstackFileMap(cfg Config) map[string]string {
+	files := map[string]string{
+		"go.mod": goModTmpl,
+		"cmd/web/main.go": fwMainGoTmpl,
+		"internal/handler/home.go": fwHomeHandlerTmpl,
+		"internal/handler/auth.go": fwAuthHandlerTmpl,
+		"internal/template/renderer.go": fwRendererTmpl,
+		"web/static/css/style.css": fwCSSTmpl(cfg.CSSFramework),
+		"web/static/js/app.js": fwJSTmpl,
+		"web/templates/layout/base.html": fwBaseTmpl,
+		"web/templates/pages/home.html": fwHomePageTmpl,
+		"web/templates/components/navbar.html": fwNavbarTmpl,
+		"migrations/.gitkeep": "",
+		".env.example": fwEnvTmpl,
+		".env": fwEnvTmpl,
+		".gitignore": gitignoreTmpl,
+		"Makefile": fwMakefileTmpl,
+		"README.md": fwReadmeTmpl,
+	}
+
+	if cfg.Database != "none" {
+		databaseCfg := cfg
+		databaseCfg.Framework = "gin"
+		files["internal/model/user.go"] = modelGoTmplFn(databaseCfg)
+		files["internal/repository/user.go"] = repositoryGoTmpl
+		files["internal/service/user.go"] = serviceGoTmpl
+	}
+
+	if cfg.Docker {
+		files["Dockerfile"] = fwDockerfileTmpl
+	}
+
+	files[".github/workflows/ci.yml"] = ciGoTmpl
 
 	return files
 }
@@ -210,31 +340,36 @@ const goModTmpl = `module {{.ModuleName}}
 go 1.22
 `
 
-const mainGoTmpl = `package main
+var mainGoTmpl = `package main
 
 import (
 	"log"
 
 	"{{.ModuleName}}/internal/config"
-	"{{.ModuleName}}/internal/database"
-	"{{.ModuleName}}/internal/routes"
+	"{{.ModuleName}}/internal/model"
+	"{{.ModuleName}}/internal/handler"
+	"{{.ModuleName}}/internal/middleware"
+	"{{.ModuleName}}/internal/repository"
+	"{{.ModuleName}}/internal/service"
 )
 
 func main() {
 	cfg := config.Load()
 
-	db, err := database.Connect(cfg)
+	db, err := model.ConnectDB(cfg)
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
 	}
 	defer db.Close()
 
-	r := routes.Setup(cfg, db)
+	repo := repository.NewUserRepository(db)
+	svc := service.NewUserService(repo)
+	h := handler.NewUserHandler(svc)
 
-	log.Printf("🚀 Server running on %s", cfg.AppAddr)
-	if err := r.Run(cfg.AppAddr); err != nil {
-		log.Fatal(err)
-	}
+	r := handler.SetupRoutes(cfg, db, h)
+
+	log.Printf("Server running on %s", cfg.AppAddr)
+	handler.StartServer(r, cfg.AppAddr)
 }
 `
 
@@ -277,392 +412,55 @@ func getEnv(key, fallback string) string {
 }
 `
 
-const databaseGoTmpl = `package database
+func modelGoTmplFn(cfg Config) string {
+	return fmt.Sprintf(`package model
 
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"{{.ModuleName}}/internal/config"
-	_ "github.com/lib/pq"           // postgres
-	_ "github.com/go-sql-driver/mysql" // mysql
-	_ "github.com/mattn/go-sqlite3"    // sqlite
+	_ %q
 )
 
-// Connect opens a database connection using the config.
-func Connect(cfg *config.Config) (*sql.DB, error) {
+type User struct {
+	ID        int       `+"`"+`json:"id" db:"id"`+"`"+`
+	Name      string    `+"`"+`json:"name" db:"name"`+"`"+`
+	Email     string    `+"`"+`json:"email" db:"email"`+"`"+`
+	CreatedAt time.Time `+"`"+`json:"created_at" db:"created_at"`+"`"+`
+	UpdatedAt time.Time `+"`"+`json:"updated_at" db:"updated_at"`+"`"+`
+}
+
+func ConnectDB(cfg *config.Config) (*sql.DB, error) {
 	db, err := sql.Open(cfg.DBDriver, cfg.DBDSN)
 	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
+		return nil, fmt.Errorf("open db: %%w", err)
 	}
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping db: %w", err)
+		return nil, fmt.Errorf("ping db: %%w", err)
 	}
 	return db, nil
 }
-`
-
-func routesGoTmpl(framework string) string {
-	switch framework {
-	case "fiber":
-		return `package routes
-
-import (
-	"database/sql"
-
-	"{{.ModuleName}}/internal/config"
-	"{{.ModuleName}}/internal/middleware"
-	"github.com/gofiber/fiber/v2"
-)
-
-// Setup registers all application routes.
-func Setup(cfg *config.Config, db *sql.DB) *fiber.App {
-	app := fiber.New()
-	app.Use(middleware.RequestID())
-	app.Use(middleware.Logger())
-	app.Use(middleware.Recovery())
-	app.Use(middleware.CORS())
-
-	api := app.Group("/api/v1")
-	api.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok", "app": cfg.AppName})
-	})
-	api.Get("/live", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "alive"})
-	})
-	api.Get("/ready", func(c *fiber.Ctx) error {
-		if err := db.Ping(); err != nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "not ready"})
-		}
-		return c.JSON(fiber.Map{"status": "ready"})
-	})
-
-	// gostack:routes
-
-	return app
+`, dbDriverImport(cfg))
 }
-`
-	case "echo":
-		return `package routes
 
-import (
-	"database/sql"
-	"net/http"
-
-	"{{.ModuleName}}/internal/config"
-	"{{.ModuleName}}/internal/middleware"
-	"github.com/labstack/echo/v4"
-)
-
-// Setup registers all application routes.
-func Setup(cfg *config.Config, db *sql.DB) *echo.Echo {
-	e := echo.New()
-	e.Use(middleware.RequestID())
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recovery())
-	e.Use(middleware.CORS())
-
-	api := e.Group("/api/v1")
-	api.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok", "app": cfg.AppName})
-	})
-	api.GET("/live", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "alive"})
-	})
-	api.GET("/ready", func(c echo.Context) error {
-		if err := db.Ping(); err != nil {
-			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
-		}
-		return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
-	})
-
-	// gostack:routes
-
-	return e
-}
-`
-	case "chi":
-		return `package routes
-
-import (
-	"database/sql"
-	"encoding/json"
-	"net/http"
-
-	"{{.ModuleName}}/internal/config"
-	"{{.ModuleName}}/internal/middleware"
-	"github.com/go-chi/chi/v5"
-)
-
-// Setup registers all application routes.
-func Setup(cfg *config.Config, db *sql.DB) *chi.Mux {
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recovery)
-	r.Use(middleware.CORS())
-
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "app": cfg.AppName})
-		})
-		r.Get("/live", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
-		})
-		r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			if err := db.Ping(); err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				json.NewEncoder(w).Encode(map[string]string{"status": "not ready"})
-				return
-			}
-			json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
-		})
-	})
-
-	// gostack:routes
-
-	return r
-}
-`
-	default: // gin
-		return `package routes
-
-import (
-	"database/sql"
-	"net/http"
-
-	"{{.ModuleName}}/internal/config"
-	"{{.ModuleName}}/internal/middleware"
-	"github.com/gin-gonic/gin"
-)
-
-// Setup registers all application routes and returns the Gin engine.
-func Setup(cfg *config.Config, db *sql.DB) *gin.Engine {
-	r := gin.New()
-	r.Use(middleware.RequestID())
-	r.Use(middleware.Logger())
-	r.Use(middleware.Recovery())
-	r.Use(middleware.CORS())
-
-	api := r.Group("/api/v1")
-	api.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "app": cfg.AppName})
-	})
-	api.GET("/live", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "alive"})
-	})
-	api.GET("/ready", func(c *gin.Context) {
-		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	})
-
-	// gostack:routes
-
-	return r
-}
-`
+func dbDriverImport(cfg Config) string {
+	switch cfg.Database {
+	case "mysql":
+		return "github.com/go-sql-driver/mysql"
+	case "sqlite":
+		return "github.com/mattn/go-sqlite3"
+	default:
+		return "github.com/lib/pq"
 	}
-}
-
-func corsGoTmpl(framework string) string {
-	switch framework {
-	case "fiber":
-		return `package middleware
-
-import "github.com/gofiber/fiber/v2/middleware/cors"
-
-// CORS returns a Fiber CORS middleware.
-func CORS() func(*fiber.Ctx) error {
-	return cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
-	})
-}
-`
-	case "echo":
-		return `package middleware
-
-import (
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
-)
-
-// CORS returns an Echo CORS middleware.
-func CORS() echo.MiddlewareFunc {
-	return echomw.CORSWithConfig(echomw.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"},
-	})
-}
-`
-	case "chi":
-		return `package middleware
-
-import "net/http"
-
-// CORS returns a simple CORS middleware for chi.
-func CORS() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-`
-	default: // gin
-		return `package middleware
-
-import "github.com/gin-gonic/gin"
-
-// CORS returns a Gin CORS middleware.
-func CORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		c.Next()
-	}
-}
-`
-	}
-}
-
-func jwtMiddlewareTmpl(_ string) string {
-	return `package middleware
-
-import (
-	"net/http"
-	"strings"
-
-	"github.com/golang-jwt/jwt/v5"
-)
-
-// JWTSecret should be loaded from config in production.
-var JWTSecret = []byte("change-me")
-
-// JWT validates the Authorization: Bearer <token> header.
-func JWT(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		tokenStr := strings.TrimPrefix(auth, "Bearer ")
-		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-			return JWTSecret, nil
-		})
-		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-`
 }
 
 // ---------------------------------------------------------------------------
 // Middleware templates
 // ---------------------------------------------------------------------------
 
-func requestIDGoTmpl(framework string) string {
-	switch framework {
-	case "fiber":
-		return `package middleware
-
-import "github.com/gofiber/fiber/v2"
-
-func RequestID() func(*fiber.Ctx) error {
-	return func(c *fiber.Ctx) error {
-		id := c.Get("X-Request-ID")
-		if id == "" {
-			id = c.IP() + "-" + c.IP()
-		}
-		c.Set("X-Request-ID", id)
-		return c.Next()
-	}
-}
-`
-	case "echo":
-		return `package middleware
-
-import "github.com/labstack/echo/v4"
-
-func RequestID() echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			id := c.Request().Header.Get("X-Request-ID")
-			if id == "" {
-				id = c.RealIP() + "-" + c.Response().Header().Get(echo.HeaderXRequestID)
-			}
-			c.Response().Header().Set("X-Request-ID", id)
-			return next(c)
-		}
-	}
-}
-`
-	case "chi":
-		return `package middleware
-
-import (
-	"crypto/rand"
-	"encoding/hex"
-	"net/http"
-)
-
-func RequestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-ID")
-		if id == "" {
-			b := make([]byte, 16)
-			rand.Read(b)
-			id = hex.EncodeToString(b)
-		}
-		w.Header().Set("X-Request-ID", id)
-		next.ServeHTTP(w, r)
-	})
-}
-`
-	default: // gin
-		return `package middleware
-
-import (
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-)
-
-func RequestID() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.GetHeader("X-Request-ID")
-		if id == "" {
-			id = uuid.New().String()
-		}
-		c.Set("request_id", id)
-		c.Header("X-Request-ID", id)
-		c.Next()
-	}
-}
-`
-	}
-}
-
-func loggerGoTmpl(framework string) string {
+func loggerMidTmpl(framework string) string {
 	switch framework {
 	case "fiber":
 		return `package middleware
@@ -674,7 +472,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func Logger() func(*fiber.Ctx) error {
+func Logger() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
@@ -735,13 +533,10 @@ func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-
 		c.Next()
-
 		latency := time.Since(start)
 		status := c.Writer.Status()
 		method := c.Request.Method
-
 		log.Printf("[%d] %s %s %s", status, method, path, latency)
 	}
 }
@@ -749,18 +544,22 @@ func Logger() gin.HandlerFunc {
 	}
 }
 
-func recoveryGoTmpl(framework string) string {
+func authMidTmpl(framework string) string {
 	switch framework {
 	case "fiber":
 		return `package middleware
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
-func Recovery() func(*fiber.Ctx) error {
-	return recover.New()
+func Auth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if c.Get("Authorization") == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		}
+		return c.Next()
+	}
 }
 `
 	case "echo":
@@ -768,30 +567,32 @@ func Recovery() func(*fiber.Ctx) error {
 
 import (
 	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
 )
 
-func Recovery() echo.MiddlewareFunc {
-	return echomw.Recover()
+func Auth() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if c.Request().Header.Get("Authorization") == "" {
+				return echo.NewHTTPError(401, "unauthorized")
+			}
+			return next(c)
+		}
+	}
 }
 `
 	case "chi":
 		return `package middleware
 
 import (
-	"log"
 	"net/http"
-	"runtime/debug"
 )
 
-func Recovery(next http.Handler) http.Handler {
+func Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("panic: %v\n%s", err, debug.Stack())
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-			}
-		}()
+		if r.Header.Get("Authorization") == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -800,343 +601,15 @@ func Recovery(next http.Handler) http.Handler {
 		return `package middleware
 
 import (
-	"log"
 	"net/http"
-	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 )
 
-func Recovery() gin.HandlerFunc {
+func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("panic recovered: %v\n%s", err, debug.Stack())
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"error": "internal server error",
-				})
-			}
-		}()
-		c.Next()
-	}
-}
-`
-	}
-}
-
-func timeoutGoTmpl(framework string) string {
-	switch framework {
-	case "fiber":
-		return `package middleware
-
-import (
-	"time"
-
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/timeout"
-)
-
-func Timeout(duration time.Duration) fiber.Handler {
-	return timeout.New(func(c *fiber.Ctx) error {
-		return c.Next()
-	}, duration)
-}
-`
-	case "echo":
-		return `package middleware
-
-import (
-	"context"
-	"net/http"
-	"time"
-
-	"github.com/labstack/echo/v4"
-)
-
-func Timeout(duration time.Duration) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			ctx, cancel := context.WithTimeout(c.Request().Context(), duration)
-			defer cancel()
-			c.SetRequest(c.Request().WithContext(ctx))
-
-			done := make(chan error, 1)
-			go func() {
-				done <- next(c)
-			}()
-
-			select {
-			case err := <-done:
-				return err
-			case <-ctx.Done():
-				return c.JSON(http.StatusRequestTimeout, map[string]string{"error": "request timeout"})
-			}
-		}
-	}
-}
-`
-	case "chi":
-		return `package middleware
-
-import (
-	"context"
-	"net/http"
-	"time"
-)
-
-func Timeout(duration time.Duration) func(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, cancel := context.WithTimeout(r.Context(), duration)
-			defer cancel()
-			r = r.WithContext(ctx)
-
-			done := make(chan struct{})
-			go func() {
-				next.ServeHTTP(w, r)
-				close(done)
-			}()
-
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				http.Error(w, ` + "`" + `{"error":"request timeout"}` + "`" + `, http.StatusRequestTimeout)
-			}
-		})
-	}
-}
-`
-	default: // gin
-		return `package middleware
-
-import (
-	"context"
-	"net/http"
-	"time"
-
-	"github.com/gin-gonic/gin"
-)
-
-func Timeout(duration time.Duration) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), duration)
-		defer cancel()
-
-		c.Request = c.Request.WithContext(ctx)
-
-		done := make(chan struct{})
-		go func() {
-			c.Next()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			return
-		case <-ctx.Done():
-			c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{
-				"error": "request timeout",
-			})
-		}
-	}
-}
-`
-	}
-}
-
-func rateLimitGoTmpl(framework string) string {
-	switch framework {
-	case "fiber":
-		return `package middleware
-
-import (
-	"time"
-
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
-)
-
-func RateLimit(limit int, window time.Duration) func(*fiber.Ctx) error {
-	return limiter.New(limiter.Config{
-		Max:        limit,
-		Expiration: window,
-	})
-}
-`
-	case "echo":
-		return `package middleware
-
-import (
-	"time"
-
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
-)
-
-func RateLimit(limit int, window time.Duration) echo.MiddlewareFunc {
-	return echomw.RateLimiterWithConfig(echomw.RateLimiterConfig{
-		Rate:       limit,
-		Burst:      limit,
-		ExpiresIn:  window,
-	})
-}
-`
-	case "chi":
-		return `package middleware
-
-import (
-	"net/http"
-	"sync"
-	"time"
-)
-
-type visitor struct {
-	lastSeen time.Time
-	count    int
-}
-
-type RateLimiter struct {
-	mu       sync.Mutex
-	visitors map[string]*visitor
-	limit    int
-	window   time.Duration
-}
-
-func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
-	rl := &RateLimiter{
-		visitors: make(map[string]*visitor),
-		limit:    limit,
-		window:   window,
-	}
-	go rl.cleanup()
-	return rl
-}
-
-func (rl *RateLimiter) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, v := range rl.visitors {
-			if time.Since(v.lastSeen) > rl.window {
-				delete(rl.visitors, ip)
-			}
-		}
-		rl.mu.Unlock()
-	}
-}
-
-func (rl *RateLimiter) Allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	v, ok := rl.visitors[ip]
-	if !ok {
-		rl.visitors[ip] = &visitor{lastSeen: time.Now(), count: 1}
-		return true
-	}
-
-	if time.Since(v.lastSeen) > rl.window {
-		v.count = 1
-		v.lastSeen = time.Now()
-		return true
-	}
-
-	v.lastSeen = time.Now()
-	v.count++
-	return v.count <= rl.limit
-}
-
-func RateLimit(limit int, window time.Duration) func(http.Handler) http.Handler {
-	rl := NewRateLimiter(limit, window)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rl.Allow(r.RemoteAddr) {
-				http.Error(w, ` + "`" + `{"error":"too many requests"}` + "`" + `, http.StatusTooManyRequests)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-`
-	default: // gin
-		return `package middleware
-
-import (
-	"net/http"
-	"sync"
-	"time"
-
-	"github.com/gin-gonic/gin"
-)
-
-type visitor struct {
-	lastSeen time.Time
-	count    int
-}
-
-type RateLimiter struct {
-	mu       sync.Mutex
-	visitors map[string]*visitor
-	limit    int
-	window   time.Duration
-}
-
-func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
-	rl := &RateLimiter{
-		visitors: make(map[string]*visitor),
-		limit:    limit,
-		window:   window,
-	}
-	go rl.cleanup()
-	return rl
-}
-
-func (rl *RateLimiter) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, v := range rl.visitors {
-			if time.Since(v.lastSeen) > rl.window {
-				delete(rl.visitors, ip)
-			}
-		}
-		rl.mu.Unlock()
-	}
-}
-
-func (rl *RateLimiter) Allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	v, ok := rl.visitors[ip]
-	if !ok {
-		rl.visitors[ip] = &visitor{lastSeen: time.Now(), count: 1}
-		return true
-	}
-
-	if time.Since(v.lastSeen) > rl.window {
-		v.count = 1
-		v.lastSeen = time.Now()
-		return true
-	}
-
-	v.lastSeen = time.Now()
-	v.count++
-	return v.count <= rl.limit
-}
-
-func RateLimit(limit int, window time.Duration) gin.HandlerFunc {
-	rl := NewRateLimiter(limit, window)
-	return func(c *gin.Context) {
-		ip := c.ClientIP()
-		if !rl.Allow(ip) {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "too many requests",
-			})
+		if c.GetHeader("Authorization") == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 		c.Next()
@@ -1146,88 +619,272 @@ func RateLimit(limit int, window time.Duration) gin.HandlerFunc {
 	}
 }
 
-const entityGoTmpl = `package entity
-
-import "time"
-
-// User represents a user in the system.
-type User struct {
-	ID        int       ` + "`" + `json:"id" db:"id"` + "`" + `
-	Name      string    ` + "`" + `json:"name" db:"name"` + "`" + `
-	Email     string    ` + "`" + `json:"email" db:"email"` + "`" + `
-	CreatedAt time.Time ` + "`" + `json:"created_at" db:"created_at"` + "`" + `
-	UpdatedAt time.Time ` + "`" + `json:"updated_at" db:"updated_at"` + "`" + `
-}
-`
+// ---------------------------------------------------------------------------
+// Handler template with SetupRoutes & StartServer
+// ---------------------------------------------------------------------------
 
 func handlerGoTmpl(framework string) string {
-	_ = framework
-	return `package handler
+	switch framework {
+	case "fiber":
+		return `package handler
 
 import (
-	"net/http"
+	"database/sql"
+	"log"
 
+	"{{.ModuleName}}/internal/config"
+	"{{.ModuleName}}/internal/middleware"
 	"{{.ModuleName}}/internal/service"
+	"github.com/gofiber/fiber/v2"
 )
 
-// UserHandler handles HTTP requests for user resources.
 type UserHandler struct {
 	svc service.UserService
 }
 
-// NewUserHandler creates a new UserHandler.
 func NewUserHandler(svc service.UserService) *UserHandler {
 	return &UserHandler{svc: svc}
 }
 
-// List handles GET /users.
+func SetupRoutes(cfg *config.Config, db *sql.DB, h *UserHandler) *fiber.App {
+	app := fiber.New()
+	app.Use(middleware.Logger())
+	app.Use(middleware.Auth())
+
+	api := app.Group("/api/v1")
+	api.Get("/health", func(c *fiber.Ctx) error {
+		if err := db.Ping(); err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "not ready"})
+		}
+		return c.JSON(fiber.Map{"status": "ok", "app": cfg.AppName})
+	})
+
+	// gostack:routes
+
+	return app
+}
+
+func StartServer(app *fiber.App, addr string) {
+	log.Printf("Server running on %s", addr)
+	if err := app.Listen(addr); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (h *UserHandler) List(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{"message": "list users"})
+}
+`
+	case "echo":
+		return `package handler
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+
+	"{{.ModuleName}}/internal/config"
+	"{{.ModuleName}}/internal/middleware"
+	"{{.ModuleName}}/internal/service"
+	"github.com/labstack/echo/v4"
+)
+
+type UserHandler struct {
+	svc service.UserService
+}
+
+func NewUserHandler(svc service.UserService) *UserHandler {
+	return &UserHandler{svc: svc}
+}
+
+func SetupRoutes(cfg *config.Config, db *sql.DB, h *UserHandler) *echo.Echo {
+	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Auth())
+
+	e.GET("/api/v1/health", func(c echo.Context) error {
+		if err := db.Ping(); err != nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok", "app": cfg.AppName})
+	})
+
+	// gostack:routes
+
+	return e
+}
+
+func StartServer(e *echo.Echo, addr string) {
+	log.Printf("Server running on %s", addr)
+	if err := e.Start(addr); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (h *UserHandler) List(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"message": "list users"})
+}
+`
+	case "chi":
+		return `package handler
+
+import (
+	"database/sql"
+	"encoding/json"
+	"log"
+	"net/http"
+
+	"{{.ModuleName}}/internal/config"
+	"{{.ModuleName}}/internal/middleware"
+	"{{.ModuleName}}/internal/service"
+	"github.com/go-chi/chi/v5"
+)
+
+type UserHandler struct {
+	svc service.UserService
+}
+
+func NewUserHandler(svc service.UserService) *UserHandler {
+	return &UserHandler{svc: svc}
+}
+
+func SetupRoutes(cfg *config.Config, db *sql.DB, h *UserHandler) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Auth)
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if err := db.Ping(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{"status": "not ready"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "app": cfg.AppName})
+		})
+	})
+
+	// gostack:routes
+
+	return r
+}
+
+func StartServer(r *chi.Mux, addr string) {
+	log.Printf("Server running on %s", addr)
+	if err := http.ListenAndServe(addr, r); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(` + "`" + `{"message":"list users"}` + "`" + `))
+	json.NewEncoder(w).Encode(map[string]string{"message": "list users"})
 }
 `
+	default: // gin
+		return `package handler
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+
+	"{{.ModuleName}}/internal/config"
+	"{{.ModuleName}}/internal/middleware"
+	"{{.ModuleName}}/internal/service"
+	"github.com/gin-gonic/gin"
+)
+
+type UserHandler struct {
+	svc service.UserService
 }
+
+func NewUserHandler(svc service.UserService) *UserHandler {
+	return &UserHandler{svc: svc}
+}
+
+func SetupRoutes(cfg *config.Config, db *sql.DB, h *UserHandler) *gin.Engine {
+	r := gin.New()
+	r.Use(middleware.Logger())
+	r.Use(middleware.Auth())
+
+	r.GET("/api/v1/health", func(c *gin.Context) {
+		if err := db.Ping(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "app": cfg.AppName})
+	})
+
+	// gostack:routes
+
+	return r
+}
+
+func StartServer(r *gin.Engine, addr string) {
+	log.Printf("Server running on %s", addr)
+	if err := r.Run(addr); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (h *UserHandler) List(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "list users"})
+}
+`
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Service & Repository templates
+// ---------------------------------------------------------------------------
 
 const serviceGoTmpl = `package service
 
-// UserService defines business logic for user.
+import (
+	"{{.ModuleName}}/internal/repository"
+)
+
 type UserService interface {
 }
 
-// userService implements UserService.
 type userService struct {
+	repo repository.UserRepository
 }
 
-// NewUserService creates a new UserService.
-func NewUserService() UserService {
-	return &userService{}
+func NewUserService(repo repository.UserRepository) UserService {
+	return &userService{repo: repo}
 }
 `
 
 const repositoryGoTmpl = `package repository
 
-// UserRepository defines data-access operations for user.
+import (
+	"database/sql"
+)
+
 type UserRepository interface {
 }
 
-// userRepository implements UserRepository.
 type userRepository struct {
+	db *sql.DB
 }
 
-// NewUserRepository creates a new UserRepository.
-func NewUserRepository() UserRepository {
-	return &userRepository{}
+func NewUserRepository(db *sql.DB) UserRepository {
+	return &userRepository{db: db}
 }
 `
 
 // ---------------------------------------------------------------------------
-// Example test templates
+// Test templates
 // ---------------------------------------------------------------------------
 
 const handlerTestGoTmpl = `package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -1243,73 +900,31 @@ func TestUserHandler_List(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
-}
-`
 
-const serviceTestGoTmpl = `package service
-
-import "testing"
-
-func TestNewUserService(t *testing.T) {
-	svc := NewUserService()
-	if svc == nil {
-		t.Error("expected non-nil service")
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["message"] != "list users" {
+		t.Errorf("unexpected message: %s", resp["message"])
 	}
 }
 `
 
-// ---------------------------------------------------------------------------
-// Utility package templates
-// ---------------------------------------------------------------------------
+const serviceTestTmpl = `package service
 
-const loggerGoTmplFile = `package logger
+import "testing"
 
-import (
-	"context"
-	"log/slog"
-	"os"
-)
-
-var log *slog.Logger
-
-func Init() {
-	log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-}
-
-func InitWithLevel(level slog.Level) {
-	log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
-	}))
-}
-
-func Info(msg string, args ...any) {
-	log.Info(msg, args...)
-}
-
-func Warn(msg string, args ...any) {
-	log.Warn(msg, args...)
-}
-
-func Error(msg string, args ...any) {
-	log.Error(msg, args...)
-}
-
-func Debug(msg string, args ...any) {
-	log.Debug(msg, args...)
-}
-
-func InfoContext(ctx context.Context, msg string, args ...any) {
-	log.InfoContext(ctx, msg, args...)
-}
-
-func ErrorContext(ctx context.Context, msg string, args ...any) {
-	log.ErrorContext(ctx, msg, args...)
+func TestNewUserService(t *testing.T) {
+	_ = NewUserService(nil)
 }
 `
 
-const responseGoTmplFile = `package response
+// ---------------------------------------------------------------------------
+// pkg templates
+// ---------------------------------------------------------------------------
+
+const responsePkgTmpl = `package response
 
 import (
 	"encoding/json"
@@ -1317,18 +932,18 @@ import (
 )
 
 type APIResponse struct {
-	Status  string      ` + "`" + `json:"status"` + "`" + `
-	Message string      ` + "`" + `json:"message,omitempty"` + "`" + `
-	Data    interface{} ` + "`" + `json:"data,omitempty"` + "`" + `
-	Meta    *Meta       ` + "`" + `json:"meta,omitempty"` + "`" + `
-	Errors  interface{} ` + "`" + `json:"errors,omitempty"` + "`" + `
+	Status  string      ` + "`json:\"status\"`" + `
+	Message string      ` + "`json:\"message,omitempty\"`" + `
+	Data    interface{} ` + "`json:\"data,omitempty\"`" + `
+	Meta    *Meta       ` + "`json:\"meta,omitempty\"`" + `
+	Errors  interface{} ` + "`json:\"errors,omitempty\"`" + `
 }
 
 type Meta struct {
-	Page       int ` + "`" + `json:"page"` + "`" + `
-	PerPage    int ` + "`" + `json:"per_page"` + "`" + `
-	Total      int ` + "`" + `json:"total"` + "`" + `
-	TotalPages int ` + "`" + `json:"total_pages"` + "`" + `
+	Page       int ` + "`json:\"page\"`" + `
+	PerPage    int ` + "`json:\"per_page\"`" + `
+	Total      int ` + "`json:\"total\"`" + `
+	TotalPages int ` + "`json:\"total_pages\"`" + `
 }
 
 func writeJSON(w http.ResponseWriter, status int, data APIResponse) {
@@ -1338,63 +953,30 @@ func writeJSON(w http.ResponseWriter, status int, data APIResponse) {
 }
 
 func Success(w http.ResponseWriter, data interface{}) {
-	writeJSON(w, http.StatusOK, APIResponse{
-		Status: "success",
-		Data:   data,
-	})
+	writeJSON(w, http.StatusOK, APIResponse{Status: "success", Data: data})
 }
 
 func Created(w http.ResponseWriter, data interface{}) {
-	writeJSON(w, http.StatusCreated, APIResponse{
-		Status: "success",
-		Data:   data,
-	})
+	writeJSON(w, http.StatusCreated, APIResponse{Status: "success", Data: data})
 }
 
-func Error(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, APIResponse{
-		Status:  "error",
-		Message: message,
-	})
-}
-
-func ValidationError(w http.ResponseWriter, errors interface{}) {
-	writeJSON(w, http.StatusUnprocessableEntity, APIResponse{
-		Status: "error",
-		Errors: errors,
-	})
+func ErrorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, APIResponse{Status: "error", Message: message})
 }
 
 func NotFound(w http.ResponseWriter, message string) {
 	if message == "" {
 		message = "resource not found"
 	}
-	Error(w, http.StatusNotFound, message)
+	ErrorJSON(w, http.StatusNotFound, message)
 }
 
 func InternalError(w http.ResponseWriter) {
-	Error(w, http.StatusInternalServerError, "internal server error")
-}
-
-func Paginated(w http.ResponseWriter, data interface{}, page, perPage, total int) {
-	totalPages := (total + perPage - 1) / perPage
-	if totalPages < 1 {
-		totalPages = 1
-	}
-	writeJSON(w, http.StatusOK, APIResponse{
-		Status: "success",
-		Data:   data,
-		Meta: &Meta{
-			Page:       page,
-			PerPage:    perPage,
-			Total:      total,
-			TotalPages: totalPages,
-		},
-	})
+	ErrorJSON(w, http.StatusInternalServerError, "internal server error")
 }
 `
 
-const validatorGoTmplFile = `package validator
+const validatorPkgTmpl = `package validator
 
 import (
 	"fmt"
@@ -1410,8 +992,8 @@ func init() {
 }
 
 type ValidationError struct {
-	Field   string ` + "`" + `json:"field"` + "`" + `
-	Message string ` + "`" + `json:"message"` + "`" + `
+	Field   string ` + "`json:\"field\"`" + `
+	Message string ` + "`json:\"message\"`" + `
 }
 
 func Validate(i interface{}) []ValidationError {
@@ -1439,10 +1021,6 @@ func messageForTag(tag, param string) string {
 		return fmt.Sprintf("must be at least %s characters", param)
 	case "max":
 		return fmt.Sprintf("must be at most %s characters", param)
-	case "gte":
-		return fmt.Sprintf("must be greater than or equal to %s", param)
-	case "lte":
-		return fmt.Sprintf("must be less than or equal to %s", param)
 	default:
 		return fmt.Sprintf("validation failed on '%s'", tag)
 	}
@@ -1462,40 +1040,48 @@ func toSnakeCase(s string) string {
 	}
 	return string(result)
 }
+`
 
-func FormatErrors(errs []ValidationError) map[string]string {
-	formatted := make(map[string]string)
-	for _, e := range errs {
-		formatted[e.Field] = e.Message
+const jwtPkgTmpl = `package jwt
+
+import (
+	"errors"
+	"time"
+
+	jwtlib "github.com/golang-jwt/jwt/v5"
+)
+
+var secret = []byte("change-me-in-production")
+
+type Claims struct {
+	UserID int ` + "`json:\"user_id\"`" + `
+	jwtlib.RegisteredClaims
+}
+
+func GenerateToken(userID int) (string, error) {
+	claims := Claims{
+		UserID: userID,
+		RegisteredClaims: jwtlib.RegisteredClaims{
+			ExpiresAt: jwtlib.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwtlib.NewNumericDate(time.Now()),
+		},
 	}
-	return formatted
+	token := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, claims)
+	return token.SignedString(secret)
 }
 
-func FormatErrorsSlice(errs []ValidationError) []string {
-	var msgs []string
-	for _, e := range errs {
-		msgs = append(msgs, fmt.Sprintf("%s: %s", e.Field, e.Message))
+func ValidateToken(tokenStr string) (*Claims, error) {
+	token, err := jwtlib.ParseWithClaims(tokenStr, &Claims{}, func(t *jwtlib.Token) (interface{}, error) {
+		return secret, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return msgs
-}
-
-func Valid(i interface{}) bool {
-	return validate.Struct(i) == nil
-}
-
-func HasErrors(errs []ValidationError) bool {
-	return len(errs) > 0
-}
-
-func ErrorSlice(errs []ValidationError) string {
-	var sb strings.Builder
-	for i, e := range errs {
-		if i > 0 {
-			sb.WriteString("; ")
-		}
-		sb.WriteString(fmt.Sprintf("%s: %s", e.Field, e.Message))
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token")
 	}
-	return sb.String()
+	return claims, nil
 }
 `
 
@@ -1518,55 +1104,6 @@ jobs:
       - run: go mod tidy
       - run: go vet ./...
       - run: go test ./... -v -count=1
-`
-
-const errorsGoTmplFile = `package errors
-
-import "net/http"
-
-type AppError struct {
-	Code        int    ` + "`" + `json:"-"` + "`" + `
-	Message     string ` + "`" + `json:"message"` + "`" + `
-	InternalErr error  ` + "`" + `json:"-"` + "`" + `
-}
-
-func (e *AppError) Error() string {
-	return e.Message
-}
-
-func (e *AppError) Unwrap() error {
-	return e.InternalErr
-}
-
-func New(code int, message string) *AppError {
-	return &AppError{Code: code, Message: message}
-}
-
-func Wrap(code int, message string, err error) *AppError {
-	return &AppError{Code: code, Message: message, InternalErr: err}
-}
-
-var (
-	ErrNotFound       = New(http.StatusNotFound, "resource not found")
-	ErrBadRequest     = New(http.StatusBadRequest, "bad request")
-	ErrUnauthorized   = New(http.StatusUnauthorized, "unauthorized")
-	ErrForbidden      = New(http.StatusForbidden, "forbidden")
-	ErrConflict       = New(http.StatusConflict, "resource already exists")
-	ErrInternal       = New(http.StatusInternalServerError, "internal server error")
-	ErrUnprocessable  = New(http.StatusUnprocessableEntity, "unprocessable entity")
-	ErrTooManyRequest = New(http.StatusTooManyRequests, "too many requests")
-)
-
-func IsNotFound(err error) bool  { return isCode(err, http.StatusNotFound) }
-func IsBadRequest(err error) bool { return isCode(err, http.StatusBadRequest) }
-func IsConflict(err error) bool   { return isCode(err, http.StatusConflict) }
-
-func isCode(err error, code int) bool {
-	if appErr, ok := err.(*AppError); ok {
-		return appErr.Code == code
-	}
-	return false
-}
 `
 
 const envTmpl = `APP_NAME={{.ProjectName}}
@@ -1594,13 +1131,13 @@ vendor/
 const makefileTmpl = `APP_NAME={{.ProjectName}}
 BIN_DIR=./bin
 
-.PHONY: run build tidy lint test clean migrate
+.PHONY: run build tidy lint test clean
 
 run:
-	go run ./cmd/api
+	go run ./cmd/server
 
 build:
-	go build -o $(BIN_DIR)/$(APP_NAME) ./cmd/api
+	go build -o $(BIN_DIR)/$(APP_NAME) ./cmd/server
 
 tidy:
 	go mod tidy
@@ -1613,12 +1150,6 @@ test:
 
 clean:
 	rm -rf $(BIN_DIR)
-
-migrate:
-	goose up
-
-migrate-down:
-	goose down
 `
 
 const readmeTmpl = `# {{.ProjectName}}
@@ -1631,7 +1162,6 @@ Generated with [GoStack CLI](https://github.com/alifkhasan01/gostack-cli).
 |------------|---------------------|
 | Framework  | {{.Framework}}      |
 | Database   | {{.Database}}       |
-| ORM        | {{.ORM}}            |
 | Auth       | {{.Auth}}           |
 
 ## Getting Started
@@ -1641,29 +1171,27 @@ cp .env.example .env
 # edit .env with your DB credentials
 
 go mod tidy
-go run ./cmd/api
+go run ./cmd/server
 ` + "```" + `
 
 ## Structure
 
 ` + "```" + `
 .
-├── cmd/api/          # entry point
+├── cmd/server/       # entry point
 ├── internal/
 │   ├── config/       # environment config
-│   ├── database/     # db connection
-│   ├── entity/       # domain models
-│   ├── errors/       # custom error types
-│   ├── handler/      # HTTP handlers
-│   ├── logger/       # structured logger
-│   ├── middleware/   # HTTP middlewares
+│   ├── handler/      # HTTP handlers + routes
+│   ├── middleware/    # HTTP middlewares
+│   ├── model/        # domain models + DB connection
 │   ├── repository/   # data access layer
+│   └── service/      # business logic
+├── pkg/
+│   ├── jwt/          # JWT helpers
 │   ├── response/     # standard API response
-│   ├── routes/       # route registration
-│   ├── service/      # business logic
 │   └── validator/    # request validation
 ├── migrations/       # SQL migrations
-└── docs/             # Swagger docs
+└── docs/             # API docs
 ` + "```" + `
 `
 
@@ -1675,7 +1203,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /app/server ./cmd/api
+RUN go build -o /app/server ./cmd/server
 
 # Run stage
 FROM alpine:3.19
@@ -1712,4 +1240,1186 @@ services:
 
 volumes:
   pgdata:
+`
+
+// =========================================================================
+// CLI tool templates
+// =========================================================================
+
+const cobraRootTmpl = `package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "{{.ProjectName}}",
+	Short: "{{.ProjectName}} - a CLI tool built with GoStack",
+	Long: ` + "`" + `{{.ProjectName}} is a CLI application generated by GoStack CLI.` + "`" + `,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("{{.ProjectName}} — use --help to see available commands")
+	},
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+`
+
+const cobraInitTmpl = `package cmd
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
+
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize a new project",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Initializing project...")
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(initCmd)
+}
+`
+
+const cobraBuildTmpl = `package cmd
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
+
+var buildCmd = &cobra.Command{
+	Use:   "build",
+	Short: "Build the project",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Building project...")
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(buildCmd)
+}
+`
+
+const cobraRunTmpl = `package cmd
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
+
+var runCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run the project",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Running project...")
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(runCmd)
+}
+`
+
+const cobraMainTmpl = `package main
+
+import (
+	"{{.ModuleName}}/cmd"
+)
+
+func main() {
+	cmd.Execute()
+}
+`
+
+const plainRootTmpl = `package cmd
+
+import (
+	"flag"
+	"fmt"
+	"os"
+)
+
+func Execute() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: {{.ProjectName}} <command>")
+		fmt.Println("Available commands: init, build, run")
+		os.Exit(1)
+	}
+
+	cmd := os.Args[1]
+	switch cmd {
+	case "init":
+		InitCmd()
+	case "build":
+		BuildCmd()
+	case "run":
+		RunCmd()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %%s\n", cmd)
+		os.Exit(1)
+	}
+}
+
+func InitCmd() {
+	initFlags := flag.NewFlagSet("init", flag.ExitOnError)
+	name := initFlags.String("name", "", "project name")
+	initFlags.Parse(os.Args[2:])
+	fmt.Printf("Initializing project: %%s\n", *name)
+}
+
+func BuildCmd() {
+	fmt.Println("Building project...")
+}
+
+func RunCmd() {
+	fmt.Println("Running project...")
+}
+`
+
+const plainMainTmpl = `package main
+
+import (
+	"{{.ModuleName}}/cmd"
+)
+
+func main() {
+	cmd.Execute()
+}
+`
+
+const cliConfigTmpl = `package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+type Config struct {
+	AppName string ` + "`json:\"app_name\"`" + `
+	Version string ` + "`json:\"version\"`" + `
+}
+
+func Load() (*Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	cfgPath := filepath.Join(home, "."+appName()+".json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return Default(), nil
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Default(), nil
+	}
+	return &cfg, nil
+}
+
+func Default() *Config {
+	return &Config{
+		AppName: "{{.ProjectName}}",
+		Version: "0.1.0",
+	}
+}
+
+func appName() string {
+	return "{{.ProjectName}}"
+}
+
+func (c *Config) Save() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	cfgPath := filepath.Join(home, "."+appName()+".json")
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	//nolint:gosec
+	return os.WriteFile(cfgPath, data, 0644)
+}
+
+func init() {
+	// Auto-load config on init
+	if _, err := Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %%v\n", err)
+	}
+}
+`
+
+const cliRunnerTmpl = `package runner
+
+import (
+	"fmt"
+	"os/exec"
+)
+
+func RunCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func RunWithOutput(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("run %%s: %%w", name, err)
+	}
+	return string(out), nil
+}
+`
+
+const cliPrinterTmpl = `package output
+
+import (
+	"fmt"
+	"strings"
+)
+
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorCyan   = "\033[36m"
+)
+
+func Info(format string, a ...interface{}) {
+	fmt.Print(string(colorCyan))
+	fmt.Printf(format, a...)
+	fmt.Println(string(colorReset))
+}
+
+func Success(format string, a ...interface{}) {
+	fmt.Print(string(colorGreen))
+	fmt.Printf("✓ "+format, a...)
+	fmt.Println(string(colorReset))
+}
+
+func Error(format string, a ...interface{}) {
+	fmt.Print(string(colorRed))
+	fmt.Printf("✗ "+format, a...)
+	fmt.Println(string(colorReset))
+}
+
+func Warning(format string, a ...interface{}) {
+	fmt.Print(string(colorYellow))
+	fmt.Printf("! "+format, a...)
+	fmt.Println(string(colorReset))
+}
+
+func Table(headers []string, rows [][]string) {
+	cols := len(headers)
+	if cols == 0 {
+		return
+	}
+	widths := make([]int, cols)
+	for i, h := range headers {
+		widths[i] = len(h)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < cols && len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	printRow(headers, widths, colorBlue)
+	fmt.Println(strings.Repeat("─", sum(widths)+cols*3+1))
+	for _, row := range rows {
+		printRow(row, widths, "")
+	}
+}
+
+func printRow(cells []string, widths []int, color string) {
+	fmt.Print(color)
+	for i, cell := range cells {
+		if i >= len(widths) {
+			break
+		}
+		fmt.Printf(" %%-#*s", widths[i], cell)
+	}
+	fmt.Println(colorReset)
+}
+
+func sum(vals []int) int {
+	s := 0
+	for _, v := range vals {
+		s += v
+	}
+	return s
+}
+`
+
+const cliUtilFileTmpl = `package util
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+)
+
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func ReadFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func WriteFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func CopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+`
+
+func goreleaserTmplFunc(projectName, version string) string {
+	nameTmpl := `{{ .ProjectName }}_
+{{- title .Os }}_
+{{- if eq .Arch "amd64" }}x86_64
+{{- else if eq .Arch "386" }}i386
+{{- else }}{{ .Arch }}{{ end }}`
+	return fmt.Sprintf(`# .goreleaser.yml
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - binary: "%s"
+    main: .
+    ldflags:
+      - -s -w -X main.version=%s
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      %s
+    format_overrides:
+      - goos: windows
+        format: zip
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+`, projectName, version, nameTmpl)
+}
+
+const cliMakefileTmpl = `APP_NAME={{.ProjectName}}
+BIN_DIR=./bin
+
+.PHONY: run build tidy lint test clean release
+
+run:
+	go run .
+
+build:
+	go build -o $(BIN_DIR)/$(APP_NAME) .
+
+tidy:
+	go mod tidy
+
+lint:
+	golangci-lint run ./...
+
+test:
+	go test ./... -v
+
+release:
+	goreleaser release --snapshot --skip-publish --clean
+
+clean:
+	rm -rf $(BIN_DIR)
+`
+
+const cliReadmeTmpl = `# {{.ProjectName}}
+
+A CLI tool built with [GoStack CLI](https://github.com/alifkhasan01/gostack-cli).
+
+## Commands
+
+- **init** — Initialize a new project
+- **build** — Build the project
+- **run** — Run the project
+
+## Getting Started
+
+` + "```bash" + `
+go mod tidy
+go build -o bin/{{.ProjectName}} .
+./bin/{{.ProjectName}} --help
+` + "```" + `
+
+## Structure
+
+` + "```" + `
+.
+├── cmd/              # CLI commands (cobra)
+├── internal/
+│   ├── config/       # Configuration loader
+│   ├── runner/       # Core logic
+│   └── output/       # Terminal output helpers
+├── pkg/
+│   └── util/         # File utilities
+├── main.go           # Entry point
+└── .goreleaser.yml   # Release configuration
+` + "```" + `
+`
+
+const cliDockerfileTmpl = `# Build stage
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /app/{{.ProjectName}} .
+
+# Run stage
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=builder /app/{{.ProjectName}} .
+ENTRYPOINT ["/app/{{.ProjectName}}"]
+`
+
+// =========================================================================
+// Microservice templates
+// =========================================================================
+
+const msMakefileTmpl = `SERVICES := $(wildcard services/*)
+
+.PHONY: run-all build-all tidy lint test-all clean
+
+run-all:
+	@for svc in $(SERVICES); do \
+		echo "Starting $$svc..."; \
+		(cd $$svc && go run ./cmd) & \
+	done; \
+	wait
+
+build-all:
+	@for svc in $(SERVICES); do \
+		echo "Building $$svc..."; \
+		(cd $$svc && go build -o bin/ ./cmd); \
+	done
+
+tidy:
+	@for svc in $(SERVICES); do \
+		(cd $$svc && go mod tidy); \
+	done
+	cd gateway && go mod tidy
+
+lint:
+	golangci-lint run ./...
+
+test-all:
+	@for svc in $(SERVICES); do \
+		echo "Testing $$svc..."; \
+		(cd $$svc && go test ./... -v); \
+	done
+
+clean:
+	rm -rf services/*/bin gateway/bin
+`
+
+const msReadmeTmpl = `# {{.ProjectName}}
+
+A microservice project generated with [GoStack CLI](https://github.com/alifkhasan01/gostack-cli).
+
+## Services
+
+- **User Service** — manages users
+- **Order Service** — manages orders
+- **Notification Service** — sends notifications
+
+## Getting Started
+
+` + "```bash" + `
+make run-all
+` + "```" + `
+
+## Structure
+
+` + "```" + `
+.
+├── services/             # individual service modules
+│   ├── user-service/
+│   ├── order-service/
+│   └── notification-service/
+├── shared/               # shared library
+├── gateway/              # API gateway
+├── infra/                # k8s, nginx, docker-compose
+└── Makefile
+` + "```" + `
+`
+
+const sharedGoModTmpl = `module {{.ModuleName}}/shared
+
+go 1.22
+`
+
+const sharedLoggerTmpl = `package logger
+
+import (
+	"io"
+	"log"
+	"os"
+)
+
+var (
+	Info  = log.New(os.Stdout, "INFO ", log.LstdFlags)
+	Warn  = log.New(os.Stdout, "WARN ", log.LstdFlags)
+	Error = log.New(os.Stderr, "ERROR ", log.LstdFlags)
+	Debug = log.New(os.Stdout, "DEBUG ", log.LstdFlags)
+)
+
+func Init(debug bool) {
+	if !debug {
+		Debug.SetOutput(io.Discard)
+	}
+}
+`
+
+const sharedMidAuthTmpl = `package middleware
+
+import (
+	"log"
+	"net/http"
+)
+
+func Auth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func Logger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+`
+
+func msMainTmpl(modPath, svc string) string {
+	return fmt.Sprintf(`package main
+
+import (
+	"log"
+
+	"%s/internal/handler"
+	"%s/internal/repository"
+	"%s/internal/service"
+)
+
+func main() {
+	repo := repository.NewRepository()
+	svc := service.NewService(repo)
+	h := handler.NewHandler(svc)
+
+	log.Println("%s service starting on :8080")
+	_ = h
+}
+`, modPath, modPath, modPath, svc)
+}
+
+func msHandlerTmpl(modPath, svc string) string {
+	svcUpper := strings.ToUpper(svc[:1]) + svc[1:]
+	return fmt.Sprintf(`package handler
+
+import (
+	"net/http"
+
+	"%s/internal/service"
+)
+
+type %sHandler struct {
+	svc service.%sService
+}
+
+func NewHandler(svc service.%sService) *%sHandler {
+	return &%sHandler{svc: svc}
+}
+
+func (h *%sHandler) List(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("[]"))
+}
+`, modPath, svcUpper, svcUpper, svcUpper, svcUpper, svcUpper, svcUpper)
+}
+
+func msServiceTmpl(modPath, svc string) string {
+	svcUpper := strings.ToUpper(svc[:1]) + svc[1:]
+	return fmt.Sprintf(`package service
+
+import (
+	"%s/internal/repository"
+)
+
+type %sService interface {
+}
+
+type %sService struct {
+	repo repository.%sRepository
+}
+
+func NewService(repo repository.%sRepository) %sService {
+	return &%sService{repo: repo}
+}
+`, modPath, svcUpper, svcUpper, svcUpper, svcUpper, svcUpper, svcUpper)
+}
+
+func msRepoTmpl(modPath, svc string) string {
+	svcUpper := strings.ToUpper(svc[:1]) + svc[1:]
+	return fmt.Sprintf(`package repository
+
+type %sRepository interface {
+}
+
+type %sRepository struct {
+}
+
+func NewRepository() %sRepository {
+	return &%sRepository{}
+}
+`, svcUpper, svcUpper, svcUpper, svcUpper)
+}
+
+func msModelTmpl(svc string) string {
+	svcUpper := strings.ToUpper(svc[:1]) + svc[1:]
+	return fmt.Sprintf(`package model
+
+import "time"
+
+type %s struct {
+	ID        int       `+"`"+`json:"id" db:"id"`+"`"+`
+	CreatedAt time.Time `+"`"+`json:"created_at" db:"created_at"`+"`"+`
+	UpdatedAt time.Time `+"`"+`json:"updated_at" db:"updated_at"`+"`"+`
+}
+`, svcUpper)
+}
+
+const msSvcGoModTmpl = `module %s
+
+go 1.22
+`
+
+const msSvcDockerfileTmpl = `FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /app/service ./cmd
+
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=builder /app/service .
+EXPOSE 8080
+CMD ["./service"]
+`
+
+const gwMainTmpl = `package main
+
+import (
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+)
+
+func main() {
+	userURL, _ := url.Parse("http://localhost:8081")
+	orderURL, _ := url.Parse("http://localhost:8082")
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/users/", httputil.NewSingleHostReverseProxy(userURL))
+	mux.Handle("/api/v1/orders/", httputil.NewSingleHostReverseProxy(orderURL))
+
+	log.Println("API Gateway running on :8000")
+	log.Fatal(http.ListenAndServe(":8000", mux))
+}
+`
+
+const gwProxyTmpl = `package proxy
+
+import (
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+)
+
+func NewReverseProxy(target string) *httputil.ReverseProxy {
+	url, _ := url.Parse(target)
+	return httputil.NewSingleHostReverseProxy(url)
+}
+
+type Gateway struct {
+	routes map[string]*httputil.ReverseProxy
+}
+
+func NewGateway() *Gateway {
+	return &Gateway{routes: make(map[string]*httputil.ReverseProxy)}
+}
+
+func (g *Gateway) Register(path, target string) {
+	g.routes[path] = NewReverseProxy(target)
+}
+
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	proxy, ok := g.routes[r.URL.Path]
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	proxy.ServeHTTP(w, r)
+}
+`
+
+const msDockerComposeTmpl = `version: "3.9"
+
+services:
+  user-service:
+    build: ./services/user-service
+    ports:
+      - "8081:8080"
+
+  order-service:
+    build: ./services/order-service
+    ports:
+      - "8082:8080"
+
+  notification-service:
+    build: ./services/notification-service
+    ports:
+      - "8083:8080"
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - user-service
+      - order-service
+`
+
+func k8sDeploymentTmpl(svc string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: %s-service
+  template:
+    metadata:
+      labels:
+        app: %s-service
+    spec:
+      containers:
+        - name: %s-service
+          image: %s-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s-service
+spec:
+  selector:
+    app: %s-service
+  ports:
+    - port: 8080
+`, svc, svc, svc, svc, svc, svc, svc)
+}
+
+const nginxConfTmpl = `upstream user-service {
+    server user-service:8080;
+}
+
+upstream order-service {
+    server order-service:8080;
+}
+
+server {
+    listen 80;
+
+    location /api/v1/users/ {
+        proxy_pass http://user-service;
+    }
+
+    location /api/v1/orders/ {
+        proxy_pass http://order-service;
+    }
+}
+`
+
+// =========================================================================
+// Fullstack templates
+// =========================================================================
+
+const fwMainGoTmpl = `package main
+
+import (
+	"log"
+	"net/http"
+
+	"{{.ModuleName}}/internal/handler"
+	"{{.ModuleName}}/internal/template"
+)
+
+func main() {
+	tmpl := template.NewRenderer()
+
+	mux := http.NewServeMux()
+
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+
+	h := handler.NewHomeHandler(tmpl)
+	mux.HandleFunc("/", h.Home)
+	mux.HandleFunc("/dashboard", h.Dashboard)
+
+	auth := handler.NewAuthHandler(tmpl)
+	mux.HandleFunc("/login", auth.Login)
+	mux.HandleFunc("/register", auth.Register)
+
+	addr := ":8080"
+	log.Printf("Server running on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
+`
+
+const fwHomeHandlerTmpl = `package handler
+
+import (
+	"net/http"
+
+	"{{.ModuleName}}/internal/template"
+)
+
+type HomeHandler struct {
+	tmpl *template.Renderer
+}
+
+func NewHomeHandler(tmpl *template.Renderer) *HomeHandler {
+	return &HomeHandler{tmpl: tmpl}
+}
+
+func (h *HomeHandler) Home(w http.ResponseWriter, r *http.Request) {
+	h.tmpl.Render(w, "home.html", nil)
+}
+
+func (h *HomeHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{
+		"Title": "Dashboard",
+		"User":  "Guest",
+	}
+	h.tmpl.Render(w, "home.html", data)
+}
+`
+
+const fwAuthHandlerTmpl = `package handler
+
+import (
+	"net/http"
+
+	"{{.ModuleName}}/internal/template"
+)
+
+type AuthHandler struct {
+	tmpl *template.Renderer
+}
+
+func NewAuthHandler(tmpl *template.Renderer) *AuthHandler {
+	return &AuthHandler{tmpl: tmpl}
+}
+
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	h.tmpl.Render(w, "home.html", map[string]interface{}{
+		"Title": "Login",
+	})
+}
+
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	h.tmpl.Render(w, "home.html", map[string]interface{}{
+		"Title": "Register",
+	})
+}
+`
+
+const fwRendererTmpl = `package template
+
+import (
+	"html/template"
+	"log"
+	"net/http"
+	"path/filepath"
+)
+
+type Renderer struct {
+	templates *template.Template
+}
+
+func NewRenderer() *Renderer {
+	tmpl := template.Must(template.ParseGlob("web/templates/**/*.html"))
+	return &Renderer{templates: tmpl}
+}
+
+func (r *Renderer) Render(w http.ResponseWriter, name string, data interface{}) {
+	if err := r.templates.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("template error: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}
+}
+`
+
+func fwCSSTmpl(framework string) string {
+	switch framework {
+	case "tailwind":
+		return `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+	@apply bg-gray-50 text-gray-900 antialiased;
+}
+`
+	case "bootstrap":
+		return `/* Bootstrap is loaded via CDN in base.html */
+body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+`
+	default:
+		return `* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	line-height: 1.6;
+	color: #333;
+	background: #fafafa;
+}
+
+.container {
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 0 1rem;
+}
+`
+	}
+}
+
+const fwJSTmpl = `// App JavaScript
+document.addEventListener("DOMContentLoaded", function () {
+	console.log("{{.ProjectName}} app loaded");
+});
+`
+
+const fwBaseTmpl = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>{{"{{"}}if .Title}}{{"{{"}}.Title}} - {{"{{"}}end}}{{"{{"}}.ProjectName}}</title>
+	<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+	{{"{{"}}template "navbar.html" .}}
+
+	<main class="container">
+		{{"{{"}}block "content" .}}{{"{{"}}end}}
+	</main>
+
+	<script src="/static/js/app.js"></script>
+</body>
+</html>
+`
+
+const fwHomePageTmpl = `{{"{{"}}define "content"}}
+<div class="hero">
+	<h1>Welcome to {{"{{"}}.ProjectName}}</h1>
+	<p>A full-stack web application built with Go.</p>
+	<a href="/dashboard">Get Started</a>
+</div>
+{{"{{"}}end}}
+`
+
+const fwNavbarTmpl = `<nav>
+	<div class="container">
+		<a href="/">{{"{{"}}.ProjectName}}</a>
+		<ul>
+			<li><a href="/">Home</a></li>
+			<li><a href="/dashboard">Dashboard</a></li>
+			<li><a href="/login">Login</a></li>
+		</ul>
+	</div>
+</nav>
+`
+
+const fwEnvTmpl = `APP_NAME={{.ProjectName}}
+APP_PORT=8080
+`
+
+const fwMakefileTmpl = `APP_NAME={{.ProjectName}}
+BIN_DIR=./bin
+
+.PHONY: run build tidy lint test clean
+
+run:
+	go run ./cmd/web
+
+build:
+	go build -o $(BIN_DIR)/$(APP_NAME) ./cmd/web
+
+tidy:
+	go mod tidy
+
+lint:
+	golangci-lint run ./...
+
+test:
+	go test ./... -v
+
+clean:
+	rm -rf $(BIN_DIR)
+`
+
+const fwReadmeTmpl = `# {{.ProjectName}}
+
+A full-stack web application built with [GoStack CLI](https://github.com/alifkhasan01/gostack-cli).
+
+## Stack
+
+| Layer    | Choice              |
+|----------|---------------------|
+| Backend  | Go (net/http)       |
+| Templ    | html/template       |
+| Database | {{.Database}}       |
+| CSS      | {{.CSSFramework}}   |
+
+## Getting Started
+
+` + "```bash" + `
+cp .env.example .env
+# edit .env with your DB credentials (if using database)
+
+go mod tidy
+go run ./cmd/web
+` + "```" + `
+
+## Structure
+
+` + "```" + `
+.
+├── cmd/web/          # entry point
+├── internal/
+│   ├── handler/      # HTTP handlers
+│   ├── service/      # business logic
+│   ├── repository/   # data access
+│   └── template/     # template rendering
+├── web/
+│   ├── static/       # CSS, JS, images
+│   └── templates/    # HTML templates
+├── migrations/       # SQL migrations
+└── go.mod
+` + "```" + `
+`
+
+const fwDockerfileTmpl = `# Build stage
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /app/server ./cmd/web
+
+# Run stage
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=builder /app/server .
+COPY web ./web
+COPY .env.example .env
+EXPOSE 8080
+CMD ["./server"]
 `

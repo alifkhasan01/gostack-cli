@@ -17,6 +17,7 @@ const filename = "gostack.json"
 type Meta struct {
 	ProjectName  string `json:"project_name"`
 	ModuleName   string `json:"module_name"`
+	Type         string `json:"type"`
 	Framework    string `json:"framework"`
 	Architecture string `json:"architecture"`
 	Database     string `json:"database"`
