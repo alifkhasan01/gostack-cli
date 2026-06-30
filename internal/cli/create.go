@@ -20,7 +20,10 @@ var createCmd = &cobra.Command{
 	Short: "Create a new Go project from a starter template",
 	Example: `  gostack create
   gostack create my-api
-  gostack create my-api --framework gin --arch clean --database postgres --orm gorm --auth jwt --docker --swagger`,
+  gostack create my-api --type rest-api --framework gin --arch clean --database postgres --orm gorm --auth jwt --docker
+  gostack create mycli --type cli --cli-lib cobra --docker
+  gostack create mysvc --type microservice --services "user,order,notification"
+  gostack create myapp --type fullstack --database postgres`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCreate,
 }
@@ -133,7 +136,7 @@ func runCreate(_ *cobra.Command, args []string) error {
 	}
 
 	// --- Done ---
-	printer.Summary(cfg.ProjectName, destDir)
+	printer.Summary(cfg.ProjectName, cfg.Type, destDir)
 	return nil
 }
 

@@ -34,7 +34,17 @@ func Dim(msg string) {
 }
 
 // Summary prints the post-create summary box.
-func Summary(projectName, dir string) {
+func Summary(projectName, projectType, dir string) {
+	runCmd := "go run ./cmd/server"
+	switch projectType {
+	case "cli":
+		runCmd = "go run ."
+	case "microservice":
+		runCmd = "make run-all"
+	case "fullstack":
+		runCmd = "go run ./cmd/web"
+	}
+
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#89b4fa")).
@@ -45,7 +55,7 @@ func Summary(projectName, dir string) {
 		green.Render("🎉 Project created successfully!"),
 		blue.Render("Next steps:"),
 		dim.Render("$ ")+fmt.Sprintf("cd %s", projectName),
-		dim.Render("$ ")+"go run ./cmd/api",
+		dim.Render("$ ")+runCmd,
 		blue.Render("Project location:"),
 		dir,
 	)
